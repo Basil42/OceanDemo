@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 2626c06bc92eb614fad47182e610a191
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - SpectrumShader: {fileID: 7200000, guid: ca12e33c1901609459cd981b05018a78, type: 3}
+  - Noise0: {fileID: 2800000, guid: 8e4b7e5738208bf469085ed4181f6abb, type: 3}
+  - Noise1: {fileID: 2800000, guid: a9e0facf704f6934cb61d863f127a16a, type: 3}
+  - Noise2: {fileID: 2800000, guid: 14fedca7352aaba479bfd404cd1212b9, type: 3}
+  - Noise3: {fileID: 2800000, guid: 76ccd4257d599b3478620d23f82c55df, type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

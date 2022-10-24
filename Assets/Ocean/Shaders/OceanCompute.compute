@@ -1,0 +1,146 @@
+#include <HLSLSupport.cginc>
+
+#include "ComplexOperators.compute"
+
+#pragma kernel ButterflyHorizontalCompute
+#pragma kernel ButterflyVerticalCompute
+//#pragma kernel ButterflyCompute
+#pragma kernel TimeSpectrum
+#pragma kernel InversionAndPermutation
+
+Texture2D<float4> h0;
+Texture2D<float4> _butterflyTexture;
+RWStructuredBuffer<Complex3> pingPong0;//In theory, you could do a half precision version where this is also a texture
+RWStructuredBuffer<Complex3> pingPong1;
+#define M_PI 3.1415926535897932
+
+//got rid of the direction variable and simply calling the vertical and horizontal pass separately
+CBUFFER_START(FrequentUpdatesVariables)
+int stage;
+int pingPong;//this value is implicitly contained in stage and could be computed using stage & 1
+CBUFFER_END
+
+CBUFFER_START(Constants)
+int N;
+int L;
+CBUFFER_END
+
+[numthreads(16,16,1)]
+void ButterflyHorizontalCompute(uint3 id : SV_DispatchThreadID)
+{
+    Complex3 H;//H and most the float2 in this kernel are complex numbers, but encapsulating them in struct here is unpractical
+    int2 X = id.xy;
+    float4 ButterFlyData = _butterflyTexture[int2(stage,X.x)];//moved out of the branch
+    
+    const float2 w = ButterFlyData.xy;
+    if(pingPong == 0)//this branch isn't dynamic so it should be fine
+    {
+        const Complex3 p = pingPong0[ButterFlyData.z + N*X.y];
+        const Complex3 q = pingPong0[ButterFlyData.w + N*X.y];
+        
+        H = cmp_add(p,cmp_multiply(w,q));
+
+        pingPong1[X.x + N*X.y] = H;
+    }else//having an additional check here seems pointless
+    {
+        const Complex3 q = pingPong1[ButterFlyData.w + N*X.y];
+        const Complex3 p = pingPong1[ButterFlyData.z + N*X.y];
+        
+        H = cmp_add(p,cmp_multiply(w,q));
+        pingPong0[X.x + N*X.y] = H;
+    }
+}
+
+[numthreads(16,16,1)]
+void ButterflyVerticalCompute(uint3 id : SV_DispatchThreadID)
+{
+    Complex3 H;
+    int2 X = id.xy;
+    const uint BufferIndex = id.x + id.y*N;
+    const float4 data = _butterflyTexture[int2(stage,X.y)];
+    const float2 w = data.xy;//just for clarity (although at this point...)
+    if(pingPong == 0)
+    {
+        const Complex3 p = pingPong0[X.x + N*data.z];
+        const Complex3 q = pingPong0[X.x + N*data.w];
+
+        H = cmp_add(p, cmp_multiply(w,q));
+        pingPong1[BufferIndex] = H;
+    }else
+    {
+        const Complex3 p = pingPong1[X.x + N*data.z];
+        const Complex3 q = pingPong1[X.x + N*data.w];
+
+        H = cmp_add(p, cmp_multiply(w,q));
+        pingPong0[BufferIndex] = H;
+    }
+}
+
+
+RWTexture2D<float4> displacement;
+[numthreads(16,16,1)]
+void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
+{
+    const int2 X = id.xy;
+    const uint BufferIndex = id.x + id.y*N;
+    // float perms[] = {1.0, -1.0};
+    // int index = int(X.x +X.y) & 1;
+    // float perm = perms[index];
+    const float perm = int(X.x + X.y) & 1 ? -1.0 : 1.0;//true if x+y is odd
+
+    if(pingPong == 0)//pingPong here is considered const by the compiler and the branch will be optimized away
+    {
+        Complex3 pingPongData = pingPong0[BufferIndex];
+        const float3 h = float3(pingPongData.dx[0],pingPongData.dy[0],pingPongData.dz[0]);//taking the real part of all components
+        displacement[X] = float4(perm *(h/float(N*N)),1);
+    }else
+    {
+        Complex3 pingPongData = pingPong1[BufferIndex];
+        const float3 h = float3(pingPongData.dx[0], pingPongData.dy[0], pingPongData.dz[0]);
+        displacement[X] = float4(perm *(h/float(N*N)),1);
+    }
+}
+    float t;//this needs to be "tiled" somehow to not raise forever (and break)
+
+
+    RWStructuredBuffer<Complex3> tilde_hkt;//condensing the 3 textures the paper uses in a single buffer, I'd prefer something like Texture2d<float6> but that doesn't seem possible
+    
+    
+    [numthreads(16,16,1)]
+    void TimeSpectrum(uint3 id: SV_dispatchThreadID)
+    {
+        float2 X = float2(id.xy) - float(N)/2.0;
+        float2 K = float2(2.0* M_PI * X.x/L, 2.0 * M_PI * X.y/L);
+
+        float mag = length(K);
+        if(mag < 0.00001) mag = 0.00001;
+
+        const float w = sqrt(9.81 * mag);//from sq(w) = g*K used to suppress perpendicular waves
+        
+        //leaving this commented to show the intent
+        // const float2 fourier_amplitude = h0_k[id.xy];
+        // const float2 fourier_amplitude_conjugate = h0_MinusK[id.xy];
+        const float4 fourierAmplitudes = h0[id.xy];
+        float cos_wt = cos(w*t);
+        float sin_wt = sin(w *t);
+
+        //euler formula
+        const float2 exp_iwt = float2(cos_wt,sin_wt);
+        const float2 exp_iwt_inv = float2(cos_wt,-sin_wt);
+    
+        //dy
+        const float2 h_kt_dy = cmp_add(cmp_multiply(fourierAmplitudes.xy,exp_iwt)
+            ,cmp_multiply(fourierAmplitudes.zw,exp_iwt_inv));
+        //dx
+        const float2 dx = float2(0.0,-K.x/mag);
+        const float2 h_kt_dx = cmp_multiply(dx,h_kt_dy);
+        //dz (might be a misnomer due to unity orientation)
+        const float2 dz = float2(0.0,-K.y/mag);
+        const float2 h_kt_dz = cmp_multiply(dz, h_kt_dy);
+        const Complex3 result = { h_kt_dy, h_kt_dx, h_kt_dz};
+        tilde_hkt[id.x + id.y*N] = result;
+        
+    
+    }
+    
+

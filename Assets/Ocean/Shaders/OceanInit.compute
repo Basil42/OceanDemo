@@ -1,0 +1,108 @@
+#pragma kernel SpectrumGen
+#pragma kernel ButterflyTextureGen
+#include <HLSLSupport.cginc>
+
+Texture2D<float4> noise;
+CBUFFER_START(Constants)
+int N;//sample size
+int L;//most likely the patch size
+CBUFFER_END
+float A;//??
+float2 WindDirection;
+float windSpeed;
+static const float g = 9.81;
+
+//put both h0_k(RG) and h0_minusK(BA) in the same texture to save read/write operation 
+RWTexture2D<float4> h0;
+
+#define M_PI 3.1415926535897932
+#define kwExponent 8.0
+
+SamplerState SampleClampPoint;
+float4 gaussRND(uint3 id)
+{
+    const float2 texCoord = float2(id.xy)/float(N);
+    
+    //coalescing the 4 textures into a single one, saving memory and sampling (not too important here, as it is only used during init)
+    const float4 noiseValue = clamp(noise.SampleLevel(SampleClampPoint, texCoord,0),0.001f,1.0f);
+    const float u0 = 2.0*M_PI*noiseValue.x;
+    const float v0 = sqrt(-2.0 * log(noiseValue.y));
+    const float u1 = 2.0*M_PI*noiseValue.z;
+    const float v1 = sqrt(-2.0 * log(noiseValue.w));
+
+    float4 rnd = float4(v0 * cos(u0), v0 * sin(u0), v1 * cos(u1), v1 * sin(u1));
+    //return rnd;
+    //return noiseValue;
+    return float4(texCoord,N,1);
+}
+
+[numthreads(16,16,1)]
+void SpectrumGen(uint3 id : SV_DispatchThreadID)
+{
+    const float2 X = float2(id.xy) - float(N)/2.0f;
+    const float2 K = float2(2.0*M_PI * X.x/L, 2.0*M_PI*X.y/L);
+    const float L_ = (windSpeed * windSpeed)/g;//this could be "l", but it is not clearly defined in the paper
+    float mag = length(K);
+    if(mag < 0.00001) mag = 0.00001;
+    const float magSq = mag * mag;
+
+    //sqrt (Ph(k))/sqrt(2)
+    const float h0k = clamp(sqrt((A/(magSq * magSq))
+        * pow(abs(dot(normalize(K), normalize(WindDirection))),kwExponent)
+        * exp(-(1.0/(magSq *L_ * L_)))
+        * exp(-magSq * pow(L/2000.0,2.0)))/ sqrt(2.0),-4000,4000);//not sure where the 2000 factor comes from, break it down on paper
+
+    //sqrt(Ph(-k)/sqrt(2)
+    const float h0_minusK = clamp(sqrt((A/(magSq * magSq))
+        * pow(abs(dot(normalize(-K), normalize(WindDirection))),kwExponent)//exponents here are multiple of two
+        * exp(-(1.0/(magSq *L_ * L_)))
+        * exp(-magSq * pow(L/2000.0,2.0)))/ sqrt(2.0),-4000,4000);
+
+    float4 gauss_random = gaussRND(id);
+    //h0[id.xy] = float4(gauss_random.xy*h0k,gauss_random.zw*h0_minusK);
+    h0[id.xy] = gauss_random;
+}
+
+RWTexture2D<float4> ButterflyTexture;//N*log2(N) dimensions
+StructuredBuffer<uint> bitReversedBuffer;// should be computed either at run time or when changing N. It could be that GPUs have a way of doing this bare metal, but I can't find it
+[numthreads(1,16,1)]//grouped by stage
+void ButterflyTextureGen(uint3 id: SV_dispatchThreadID)
+{
+    float2 X = id.xy;
+    const int powerOfTwo = 2 << id.x +1;//Almost certainly much faster than running pow(), but it should be benchmarked at some point
+    const float k = fmod(X.y * (float(N) / (float)powerOfTwo), N);
+    //fmod is not exactly the same as mod in glsl but the argument here is always positive so no problem
+    float2 twiddle = float2(cos(2.0*M_PI*k/float(N)), sin(2.0*M_PI*k/float(N)));
+    const int butterflySpan = powerOfTwo >> 1;//very likely safe, if not use 2 << id.x
+
+    const bool butterflyWing = fmod(id.y,powerOfTwo) < butterflySpan ? true : false;//This is an infinitesimal optimisation allowed by hlsl, but it's prettier imo
+
+    //several more optimisation are likely possible, but kernel only runs once (if the shader runs with it's initial parameters at all time)
+    if(id.x ==0)
+    {
+        
+        // if(butterflyWing)
+        // {
+        //     ButterflyTexture[id.xy] = float4(twiddle,bitReversedBuffer[id.y],bitReversedBuffer[id.y +1]);
+        // }
+        // else
+        // {
+        //     ButterflyTexture[id.xy] = float4(twiddle,bitReversedBuffer[id.y -1],bitReversedBuffer[id.y]);
+        // }
+
+        //I think this is faster (no branching in exchange for 2 additional additions/subtractions), a tad less clear though
+        const int ownIndex = id.y - butterflyWing ?  0 : 1;
+        const int otherIndex = id.y + butterflyWing ? 1 : 0;
+        ButterflyTexture[id.xy] = float4(twiddle, bitReversedBuffer[ownIndex],bitReversedBuffer[otherIndex]);
+    }
+    //second to log2(N)
+    else //If all id.x == 0 pixels are confined to a single thread group, it should a cheap branch
+    {
+        int ownIndex = id.y - butterflyWing ? 0 : butterflySpan;
+        int otherIndex = id.y + butterflyWing ? butterflySpan : 0;
+        ButterflyTexture[id.xy] = float4(twiddle,ownIndex,otherIndex);
+    }
+    
+}
+
+

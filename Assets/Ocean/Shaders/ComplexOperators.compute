@@ -1,0 +1,33 @@
+float2 cmp_multiply(float2 c0, float2 c1)
+{
+    return float2(c0.x * c1.x - c0.y * c1.y,c0.x * c1.y + c0.y * c1.x);//it might be more elegant to use some kind of macro, although hlsl function are already inlined
+}
+
+float2 cmp_add(float2 c0,float2 c1)
+{
+    return float2(c0.x+c1.x,c0.y+c1.y);
+}
+
+float2 conjugate(float2 c)
+{
+    return float2(c.x,-c.y);
+}
+
+struct Complex3
+{
+    float2 dx;
+    float2 dy;
+    float2 dz;
+};
+
+Complex3 cmp_add(const Complex3 c0, const Complex3 c1)
+{
+    const Complex3 result = {float2(cmp_add(c0.dx,c1.dx)),float2(cmp_add(c0.dy,c1.dy)),float2(cmp_add(c0.dz,c1.dz))};
+    return result;
+}
+
+Complex3 cmp_multiply(const float2 c0, const Complex3 cv1)//component wise multiplication
+{
+    const Complex3 result = {cmp_multiply(c0,cv1.dx), cmp_multiply(c0,cv1.dy),cmp_multiply(c0,cv1.dz)};
+    return result;
+}
