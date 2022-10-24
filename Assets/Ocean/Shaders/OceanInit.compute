@@ -3,7 +3,7 @@
 #include <HLSLSupport.cginc>
 
 Texture2D<float4> noise;
-CBUFFER_START(Constants)
+CBUFFER_START(RarelyUpdated)
 int N;//sample size
 int L;//most likely the patch size
 CBUFFER_END
@@ -32,8 +32,7 @@ float4 gaussRND(uint3 id)
 
     float4 rnd = float4(v0 * cos(u0), v0 * sin(u0), v1 * cos(u1), v1 * sin(u1));
     //return rnd;
-    //return noiseValue;
-    return float4(texCoord,N,1);
+    return noiseValue;
 }
 
 [numthreads(16,16,1)]
@@ -59,8 +58,8 @@ void SpectrumGen(uint3 id : SV_DispatchThreadID)
         * exp(-magSq * pow(L/2000.0,2.0)))/ sqrt(2.0),-4000,4000);
 
     float4 gauss_random = gaussRND(id);
-    //h0[id.xy] = float4(gauss_random.xy*h0k,gauss_random.zw*h0_minusK);
-    h0[id.xy] = gauss_random;
+    h0[id.xy] = float4(gauss_random.xy*h0k,gauss_random.zw*h0_minusK);
+    //h0[id.xy] = gauss_random;
 }
 
 RWTexture2D<float4> ButterflyTexture;//N*log2(N) dimensions

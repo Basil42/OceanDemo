@@ -44,10 +44,9 @@ namespace Ocean
             numberOfSamples = (int)RoundingToHigherPowerOfTwo(Convert.ToUInt32(numberOfSamples));//
             //check number of sample and pad to power of 2 if necessary
             _constantParamBuffer = new ComputeBuffer(2, sizeof(int), ComputeBufferType.Constant);
+            oceanInitShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*4);
+            oceanUpdateShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*4);
             _constantParamBuffer.SetData(new [] {numberOfSamples,patchSize });
-            oceanInitShader.SetConstantBuffer("Constants",_constantParamBuffer,0,sizeof(int)*2);
-            oceanUpdateShader.SetConstantBuffer("Constants",_constantParamBuffer,0,sizeof(int)*2);
-
             InitialSpectrumGeneration();
             
             ButterFlyTextureGeneration();
@@ -99,7 +98,7 @@ namespace Ocean
             _frequentlyUpdatedBuffer = new ComputeBuffer(2, sizeof(int),ComputeBufferType.Constant);
             _frequentUpdateBufferId = Shader.PropertyToID("FrequentUpdatesVariables");
             _frequentUpdateData = new [] { 0, 0};
-            oceanUpdateShader.SetConstantBuffer(_frequentUpdateBufferId,_frequentlyUpdatedBuffer,0,sizeof(int)*_frequentUpdateData.Length);
+            oceanUpdateShader.SetConstantBuffer(_frequentUpdateBufferId,_frequentlyUpdatedBuffer,0,sizeof(int)*4);//8 bytes ints of padding
         }
 
         private void ButterFlyTextureGeneration()
@@ -173,19 +172,19 @@ namespace Ocean
             if (dumpTexture)
             {
                 dumpTexture = false;
-                Texture2D SavedTex = new Texture2D(256, 256);
+                Texture2D SavedTex = new Texture2D(numberOfSamples, numberOfSamples);
                 RenderTexture.active = _displacementTexture;
-                SavedTex.ReadPixels(new Rect(Vector2.zero, new Vector2(256f,256f)),0,0);
-                Texture2D butterFlyReadout = new Texture2D(8, 256);
+                SavedTex.ReadPixels(new Rect(Vector2.zero, new Vector2(numberOfSamples,numberOfSamples)),0,0);
+                Texture2D butterFlyReadout = new Texture2D(_butterflyTexture.width, numberOfSamples);
                 RenderTexture.active = _butterflyTexture;
-                butterFlyReadout.ReadPixels(new Rect(0,0,8,256),0,0);
-                Texture2D spectrumReadout = new Texture2D(256, 256);
+                butterFlyReadout.ReadPixels(new Rect(0,0,_butterflyTexture.width,numberOfSamples),0,0);
+                Texture2D spectrumReadout = new Texture2D(numberOfSamples, numberOfSamples);
                 RenderTexture.active = _h0ValuesTexture;
-                spectrumReadout.ReadPixels(new Rect(0,0,256,256),0,0);
+                spectrumReadout.ReadPixels(new Rect(0,0,numberOfSamples,numberOfSamples),0,0);
                 var spectrumPixel = spectrumReadout.GetPixels();
                 var pixels = SavedTex.GetPixels();
-                var ping = new Vector2[256*256*3];
-                var pong = new Vector2[256*256*3];
+                var ping = new Vector2[numberOfSamples*numberOfSamples*3];
+                var pong = new Vector2[numberOfSamples*numberOfSamples*3];
                 _fourierComponentBuffer.GetData(ping);
                 _pingPongBuffer.GetData(pong);
                 var butterflypixels = butterFlyReadout.GetPixels();
@@ -233,7 +232,7 @@ namespace Ocean
         [ContextMenu("Reverse bit ordering test")]
         private void ReverseTest()
         {
-            var testArray = GetReverseBitOrderedArray(256);
+            var testArray = GetReverseBitOrderedArray((uint)numberOfSamples);
             string arrayPrint = "";
             foreach (var index in testArray)
             {

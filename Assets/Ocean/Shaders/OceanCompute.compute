@@ -10,7 +10,8 @@
 
 Texture2D<float4> h0;
 Texture2D<float4> _butterflyTexture;
-RWStructuredBuffer<Complex3> pingPong0;//In theory, you could do a half precision version where this is also a texture
+//Apparently, you can pack these in "texture buffers" that have the same access optimization than textures
+RWStructuredBuffer<Complex3> pingPong0;
 RWStructuredBuffer<Complex3> pingPong1;
 #define M_PI 3.1415926535897932
 
@@ -20,7 +21,7 @@ int stage;
 int pingPong;//this value is implicitly contained in stage and could be computed using stage & 1
 CBUFFER_END
 
-CBUFFER_START(Constants)
+CBUFFER_START(RarelyUpdated)
 int N;
 int L;
 CBUFFER_END
