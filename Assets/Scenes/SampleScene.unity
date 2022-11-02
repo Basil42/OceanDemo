@@ -274,9 +274,9 @@ MonoBehaviour:
   oceanUpdateShader: {fileID: 7200000, guid: 8f0aa520bbd2d004b92ca39790844459, type: 3}
   numberOfSamples: 256
   patchSize: 1000
-  windSpeed: 40
-  windDirection: {x: 0.70710677, y: 0.70710677}
-  noiseTexture: {fileID: 2800000, guid: 96b1f0c1d381ef344b937cf2a1965b02, type: 3}
+  windSpeed: 400
+  windDirection: {x: 1, y: 1}
+  NoiseTexture: {fileID: 2800000, guid: 2365c2070af604547be383858cd48cf3, type: 3}
   displacementPrevis: {fileID: 1701997884}
   butterFlyPrevis: {fileID: 488613641}
   spectrumPrevis: {fileID: 1750209684}
@@ -428,7 +428,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &488613640
 RectTransform:
   m_ObjectHideFlags: 0
@@ -446,7 +446,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -338.42, y: 14.8}
+  m_AnchoredPosition: {x: -395.9, y: 14.8}
   m_SizeDelta: {x: 256, y: 256}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &488613641
@@ -739,8 +739,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 374.12, y: 14.8}
-  m_SizeDelta: {x: 256, y: 256}
+  m_AnchoredPosition: {x: 292.38, y: -1.7}
+  m_SizeDelta: {x: 512, y: 512}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1701997884
 MonoBehaviour:
@@ -812,8 +812,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 8.3, y: 14.8}
-  m_SizeDelta: {x: 256, y: 256}
+  m_AnchoredPosition: {x: -235.4, y: 0.5}
+  m_SizeDelta: {x: 512, y: 512}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1750209684
 MonoBehaviour:

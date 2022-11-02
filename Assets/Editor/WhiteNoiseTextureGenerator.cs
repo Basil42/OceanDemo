@@ -1,5 +1,7 @@
+using Unity.Mathematics;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Experimental.Rendering;
 using UnityEngine.Windows;
 using Random = UnityEngine.Random;
 
@@ -47,16 +49,33 @@ namespace Editor
         [MenuItem("Utilities/Generate 4 channel white noise")]
         public static void Generate4ChannelWhiteNoise()
         {
-            Texture2D noiseTexture = new Texture2D(256, 256);
+            Texture2D noiseTexture = new Texture2D(256, 256,TextureFormat.RGBAFloat,false);
+            noiseTexture.filterMode = FilterMode.Point;
+            
+            
             
             for (int j = 0; j < noiseTexture.width; j++)
             {
                 for(int i = 0; i < noiseTexture.height;i++)
                 {
-                    noiseTexture.SetPixel(i,j,new Color(Random.value,Random.value,Random.value,1));
+                    Color pixelColor = new Color(Random.Range(0.001f, 0.999f), Random.Range(0.001f, 0.999f),
+                        Random.Range(0.001f, 0.999f), Random.Range(0.001f, 0.999f));
+                    if (pixelColor.r == 0f || pixelColor.g == 0f || pixelColor.b == 0f || pixelColor.a == 0f)
+                    {
+                        Debug.LogWarning("Color was generated outside of random bounds");
+                    }
+                    noiseTexture.SetPixel(i,j,pixelColor);
+                    var SampledColor = noiseTexture.GetPixel(i, j);
+                    if (SampledColor.r == 0f || SampledColor.g == 0f || SampledColor.b == 0f || SampledColor.a == 0f)
+                    {
+                        
+                        Debug.LogWarning($"Incorrect color sample original is {pixelColor.r},{pixelColor.g},{pixelColor.b},{pixelColor.a} sampled is {SampledColor.r},{SampledColor.g},{SampledColor.b},{SampledColor.a}");
+                    }
                 }
+                noiseTexture.Apply();
+
             }
-            noiseTexture.Apply();
+            
             if (!TextureWhiteNoiseCheck(noiseTexture))
             {
                 Debug.LogError("texture wasn't white noise, discarding it.");

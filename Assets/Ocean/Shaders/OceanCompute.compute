@@ -13,6 +13,7 @@ Texture2D<float4> _butterflyTexture;
 //Apparently, you can pack these in "texture buffers" that have the same access optimization than textures
 RWStructuredBuffer<Complex3> pingPong0;
 RWStructuredBuffer<Complex3> pingPong1;
+RWTexture2D<float4> pingPongVis;
 #define M_PI 3.1415926535897932
 
 //got rid of the direction variable and simply calling the vertical and horizontal pass separately
@@ -31,8 +32,8 @@ void ButterflyHorizontalCompute(uint3 id : SV_DispatchThreadID)
 {
     Complex3 H;//H and most the float2 in this kernel are complex numbers, but encapsulating them in struct here is unpractical
     int2 X = id.xy;
-    float4 ButterFlyData = _butterflyTexture[int2(stage,X.x)];//moved out of the branch
-    
+    const uint BufferIndex = id.x + id.y*N;
+    const float4 ButterFlyData = _butterflyTexture[int2(stage,X.x)];//moved out of the branch
     const float2 w = ButterFlyData.xy;
     if(pingPong == 0)//this branch isn't dynamic so it should be fine
     {
@@ -40,15 +41,16 @@ void ButterflyHorizontalCompute(uint3 id : SV_DispatchThreadID)
         const Complex3 q = pingPong0[ButterFlyData.w + N*X.y];
         
         H = cmp_add(p,cmp_multiply(w,q));
-
-        pingPong1[X.x + N*X.y] = H;
+        pingPong1[BufferIndex] = H;
+        pingPongVis[id.xy] = float4(p.dy.x,0,0,1);
     }else//having an additional check here seems pointless
     {
-        const Complex3 q = pingPong1[ButterFlyData.w + N*X.y];
         const Complex3 p = pingPong1[ButterFlyData.z + N*X.y];
-        
+        const Complex3 q = pingPong1[ButterFlyData.w + N*X.y];
         H = cmp_add(p,cmp_multiply(w,q));
-        pingPong0[X.x + N*X.y] = H;
+        pingPong0[BufferIndex] = H;
+        pingPongVis[id.xy] = float4(p.dy.x,0,0,1);
+
     }
 }
 
@@ -67,6 +69,8 @@ void ButterflyVerticalCompute(uint3 id : SV_DispatchThreadID)
 
         H = cmp_add(p, cmp_multiply(w,q));
         pingPong1[BufferIndex] = H;
+        pingPongVis[id.xy] = float4(p.dy.x,0,0,1);
+
     }else
     {
         const Complex3 p = pingPong1[X.x + N*data.z];
@@ -74,6 +78,8 @@ void ButterflyVerticalCompute(uint3 id : SV_DispatchThreadID)
 
         H = cmp_add(p, cmp_multiply(w,q));
         pingPong0[BufferIndex] = H;
+        pingPongVis[id.xy] = float4(p.dy.x,0,0,1);
+
     }
 }
 
@@ -87,30 +93,30 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
     // float perms[] = {1.0, -1.0};
     // int index = int(X.x +X.y) & 1;
     // float perm = perms[index];
-    const float perm = int(X.x + X.y) & 1 ? -1.0 : 1.0;//true if x+y is odd
-
+    const float perm = (int(X.x + X.y) & 1) ? -1.0f : 1.0f;//true if x+y is odd
+    
     if(pingPong == 0)//pingPong here is considered const by the compiler and the branch will be optimized away
     {
         Complex3 pingPongData = pingPong0[BufferIndex];
-        const float3 h = float3(pingPongData.dx[0],pingPongData.dy[0],pingPongData.dz[0]);//taking the real part of all components
-        displacement[X] = float4(perm *(h/float(N*N)),1);
+        const float3 h = float3(pingPongData.dx.x,pingPongData.dy.x,pingPongData.dz.x);//taking the real part of all components
+        displacement[X] = float4(perm*(h/float(N*N)),1);
     }else
     {
         Complex3 pingPongData = pingPong1[BufferIndex];
-        const float3 h = float3(pingPongData.dx[0], pingPongData.dy[0], pingPongData.dz[0]);
-        displacement[X] = float4(perm *(h/float(N*N)),1);
+        const float3 h = float3(pingPongData.dx.x, pingPongData.dy.x, pingPongData.dz.x);
+        displacement[X] = float4(perm*(h/float(N*N)),1);
     }
 }
     float t;//this needs to be "tiled" somehow to not raise forever (and break)
 
 
     RWStructuredBuffer<Complex3> tilde_hkt;//condensing the 3 textures the paper uses in a single buffer, I'd prefer something like Texture2d<float6> but that doesn't seem possible
-    
+    RWTexture2D<float4> componentsVisual;
     
     [numthreads(16,16,1)]
     void TimeSpectrum(uint3 id: SV_dispatchThreadID)
     {
-        float2 X = float2(id.xy) - float(N)/2.0;
+        float2 X = float2(id.xy) - (float(N)/2.0);
         float2 K = float2(2.0* M_PI * X.x/L, 2.0 * M_PI * X.y/L);
 
         float mag = length(K);
@@ -121,7 +127,7 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
         //leaving this commented to show the intent
         // const float2 fourier_amplitude = h0_k[id.xy];
         // const float2 fourier_amplitude_conjugate = h0_MinusK[id.xy];
-        const float4 fourierAmplitudes = h0[id.xy];
+        float4 fourierAmplitudes = h0[id.xy];
         float cos_wt = cos(w*t);
         float sin_wt = sin(w *t);
 
@@ -138,9 +144,10 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
         //dz (might be a misnomer due to unity orientation)
         const float2 dz = float2(0.0,-K.y/mag);
         const float2 h_kt_dz = cmp_multiply(dz, h_kt_dy);
-        const Complex3 result = { h_kt_dy, h_kt_dx, h_kt_dz};
+        const Complex3 result = { h_kt_dx, h_kt_dy, h_kt_dz};
         tilde_hkt[id.x + id.y*N] = result;
         
+        componentsVisual[id.xy] = float4(result.dy,0,1);
     
     }
     
