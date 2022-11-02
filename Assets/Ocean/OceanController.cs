@@ -1,7 +1,6 @@
 using System;
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
+using UnityEngine.Serialization;
 
 namespace Ocean
 {
@@ -16,18 +15,10 @@ namespace Ocean
         [SerializeField] private int patchSize = 1000;
         [SerializeField] private float windSpeed = 40f;
         [SerializeField] private Vector2 windDirection = Vector2.right;
-        [Header("Ressources")] 
-        [SerializeField] Texture2D NoiseTexture;
-#if UNITY_EDITOR
-        [Header("Debug")] [SerializeField] private RawImage displacementPrevis;
-        [SerializeField] private RawImage butterFlyPrevis;
-        [SerializeField] private RawImage spectrumPrevis;
-        [SerializeField] bool dumpTexture =true;
-        private RenderTexture FourierPrevis;
-        private RenderTexture _passPrevis;
-        private Vector2[] ping;
-        private Vector2[] pong;
-        #endif
+        [FormerlySerializedAs("NoiseTexture")]
+        [Header("Resources")] 
+        [SerializeField] Texture2D noiseTexture;
+
         //GPU resources
         //using a single texture as they are always read from and written to at the same time (h0k is on rg h0minusk is ba)
         private RenderTexture _h0ValuesTexture;
@@ -40,7 +31,14 @@ namespace Ocean
         //constant buffers
         private ComputeBuffer _frequentlyUpdatedBuffer;
         private ComputeBuffer _constantParamBuffer;
-        
+        private int _frequentUpdateBufferId;
+        private int[] _frequentUpdateData;
+        private int _horizontalButterflyPassKernelIndex;
+        private int _verticalButterflyPassKernelIndex;
+        private int _permutationKernelIndex;
+
+        #region Initialization
+
         private void Start()
         {
             if (numberOfSamples <= 0) numberOfSamples = 1;
@@ -55,31 +53,8 @@ namespace Ocean
             ButterFlyTextureGeneration();
             BindTimeDependentBuffers();
             
-            #if UNITY_EDITOR
-            //debug
-            displacementPrevis.texture = _displacementTexture;
-            butterFlyPrevis.texture = _butterflyTexture;
-            FourierPrevis = new RenderTexture(numberOfSamples, numberOfSamples, 0, RenderTextureFormat.ARGBFloat)
-                { enableRandomWrite = true, filterMode = FilterMode.Point };
-            oceanUpdateShader.SetTexture(2,"componentsVisual",FourierPrevis);
-            _passPrevis = new RenderTexture(numberOfSamples, numberOfSamples, 0, RenderTextureFormat.ARGBFloat)
-                { enableRandomWrite = true, filterMode = FilterMode.Point };
-            spectrumPrevis.texture = _passPrevis;
-            oceanUpdateShader.SetTexture(0,"pingPongVis",_passPrevis);
-            oceanUpdateShader.SetTexture(1,"pingPongVis",_passPrevis);
-            ping = new Vector2[numberOfSamples*numberOfSamples*3];
-            pong = new Vector2[numberOfSamples*numberOfSamples*3];
-
-            var NoisetextureReadout = new Texture2D(numberOfSamples, numberOfSamples, TextureFormat.RGBAFloat, false);
-            RenderTexture.active = _h0ValuesTexture;
-            NoisetextureReadout.ReadPixels(new Rect(0,0,numberOfSamples,numberOfSamples),0,0);
-            var pixels = NoisetextureReadout.GetPixels();//NoisetextureReadout.GetRawTextureData<Vector2>();
-            //DetectNan(pixels.ToArray());
             
-            
-#endif
         }
-
         private void BindTimeDependentBuffers()
         {
             //some of these values could be packed in constant buffers (although they sadly updated out of sync)
@@ -120,7 +95,6 @@ namespace Ocean
             _frequentUpdateData = new [] { 0, 0};
             oceanUpdateShader.SetConstantBuffer(_frequentUpdateBufferId,_frequentlyUpdatedBuffer,0,sizeof(int)*4);//8 bytes ints of padding
         }
-
         private void ButterFlyTextureGeneration()
         {
             try
@@ -153,88 +127,13 @@ namespace Ocean
             }
             
         }
-
-        private int _frequentUpdateBufferId;
-        private int[] _frequentUpdateData;
-        private int _horizontalButterflyPassKernelIndex;
-        private int _verticalButterflyPassKernelIndex;
-        private int _permutationKernelIndex;
-
-        
-        private void Update()
-        {
-            FourierComponents();
-            var pingPong = 0;//keeping these values outside the array is redundant, but is kept for clarity (ideally I'd prefer passing a struct to the buffer but unity doesn't allow it
-            
-            for (int i = 0; i < Mathf.Log(numberOfSamples, 2); i++)
-            {
-                //Vertical butterfly pass
-                _frequentUpdateData[0] = i;
-                _frequentUpdateData[1] = pingPong;
-                _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
-                oceanUpdateShader.Dispatch(_verticalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
-                pingPong = pingPong == 1 ? 0 : 1;
-            }
-            for (int i = 0; i < (MathF.Log(numberOfSamples, 2)); i++)
-            {
-                //horizontal butterfly pass
-                _frequentUpdateData[0] = i;//pass
-                _frequentUpdateData[1] = pingPong;//buffer
-                _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
-                oceanUpdateShader.Dispatch(_horizontalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
-                pingPong = pingPong == 1 ? 0 : 1;
-            }
-
-            _frequentUpdateData[1] = pingPong;
-            _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
-            //inversion and permutation pass
-            oceanUpdateShader.Dispatch(_permutationKernelIndex, numberOfSamples / 16, numberOfSamples / 16, 1);
-            #if UNITY_EDITOR
-            if (dumpTexture)
-            {
-                dumpTexture = false;
-                var indexData = new int [numberOfSamples];
-                _bitReverseIndexes.GetData(indexData);
-                Texture2D SavedTex = new Texture2D(numberOfSamples, numberOfSamples,TextureFormat.RGBAFloat,false);
-                RenderTexture.active = _displacementTexture;
-                SavedTex.ReadPixels(new Rect(Vector2.zero, new Vector2(numberOfSamples,numberOfSamples)),0,0);
-                //Texture2D butterFlyReadout = new Texture2D(_butterflyTexture.width, numberOfSamples,TextureFormat.RGBAFloat,false);
-                //RenderTexture.active = _butterflyTexture;
-                //butterFlyReadout.ReadPixels(new Rect(0,0,_butterflyTexture.width,numberOfSamples),0,0,false);
-                //Texture2D spectrumReadout = new Texture2D(numberOfSamples, numberOfSamples);
-                //RenderTexture.active = _h0ValuesTexture;
-                //spectrumReadout.ReadPixels(new Rect(0,0,numberOfSamples,numberOfSamples),0,0);
-                //var spectrumPixel = spectrumReadout.GetPixels();
-                var pixels = SavedTex.GetPixels();
-                 _fourierComponentBuffer.GetData(ping);
-                 _pingPongBuffer.GetData(pong);
-                //var butterflypixels = butterFlyReadout.GetPixels();
-                Debug.Log("dumping some buffers for debug");
-            }
-            #endif
-        }
-
-        
-
-        private float _t;//initialized to 0
-        private int _timeSpectrumKernel = 1;
-        private void FourierComponents()
-        {
-            
-            _t += Time.deltaTime;//might need to be looped back to 0
-            oceanUpdateShader.SetFloat("t",_t);
-            oceanUpdateShader.Dispatch(_timeSpectrumKernel,numberOfSamples/16,numberOfSamples/16,1);
-            
-        }
-
-        
         private void InitialSpectrumGeneration()
         {
 
             int kernel = oceanInitShader.FindKernel("SpectrumGen");
 
             //assuming this L is the patch size, but it is a bit unclear in the paper, it could just be a precomputed value
-            oceanInitShader.SetTexture(kernel,"noise", NoiseTexture);
+            oceanInitShader.SetTexture(kernel,"noise", noiseTexture);
             oceanInitShader.SetFloat("A",4f);//this is a numerical constant that likely doesn't represent anything concrete, at a glance the amplitude of waves is linearly dependant on the square root of A
             oceanInitShader.SetFloat("windSpeed",windSpeed);
             //oceanInitShader.SetFloats("WindDirection",windDirection.x,windDirection.y);
@@ -244,76 +143,21 @@ namespace Ocean
             _h0ValuesTexture = new RenderTexture(numberOfSamples, numberOfSamples, 0,RenderTextureFormat.ARGBFloat/*GraphicsFormat.R32G32B32A32_SFloat*/) {enableRandomWrite = true, filterMode = FilterMode.Point};//defaults to float4
             oceanInitShader.SetTexture(kernel,"h0",_h0ValuesTexture);
             oceanInitShader.Dispatch(kernel,numberOfSamples/16,numberOfSamples/16,1);
-
-           
-// #if UNITY_EDITOR
-//             if (dumpTexture)
-//             {
-//                 var textureReadout = new Texture2D(numberOfSamples, numberOfSamples, TextureFormat.RGBAFloat, false);
-//                 RenderTexture.active = _h0ValuesTexture;
-//                 textureReadout.ReadPixels(new Rect(0,0,numberOfSamples,numberOfSamples),0,0);
-//                 var pixels = textureReadout.GetPixels();
-//                 Debug.Log("stop");
-//                 for (var index = 0; index < pixels.Length; index++)
-//                 {
-//                     var p = pixels[index];
-//                     if (float.IsNaN(p.r) || float.IsNaN(p.g) || float.IsNaN(p.b) ||
-//                         float.IsNaN(p.a))
-//                     {
-//                         
-//                         Debug.LogWarning("invalid h0");
-//                     }
-//                 }
-//             }
-//             
-// #endif
-            NoiseTexture = null;//the garbage collection should free the gpu memory
-        }
-        #if UNITY_EDITOR
-        private void DetectNan(Vector2[] vector2s)
-        {
-            bool isInNaNInterval = false;
-            List<Vector4> intervals = new List<Vector4>();
-            for (int i = 0; i < vector2s.Length; i++)
-            {
-                if (isInNaNInterval == false)
-                {
-                    if(float.IsNaN(vector2s[i].x))
-                    {
-                        isInNaNInterval = true;
-                        int trueIndex = i/3;
-                        intervals.Add(new Vector2(trueIndex % 256,Mathf.Floor((float)trueIndex/256)));
-                    }
-                }
-                else
-                {
-                    if (!float.IsNaN(vector2s[i].x))
-                    {
-                        isInNaNInterval = false;
-                        int trueIndex = i/3;
-                        intervals[^1] = new Vector4(intervals[^1].x, intervals[^1].y, trueIndex % 256,
-                            Mathf.Floor((float)trueIndex / 256));
-                    }
-                }
-                
-            }
-            Debug.Log($"finished with {(intervals.Count == 0 ? "no": "")} NaNs");
             
+            noiseTexture = null;//the garbage collection should free the gpu memory
         }
-        
-        [ContextMenu("Reverse bit ordering test")]
-        private void ReverseTest()
+        private uint RoundingToHigherPowerOfTwo(uint number)//returns number if number is already a power of two
         {
-            var testArray = GetReverseBitOrderedArray((uint)numberOfSamples);
-            string arrayPrint = "";
-            foreach (var index in testArray)
-            {
-                arrayPrint += " " + index;
-            }
-            Debug.Log(arrayPrint);
+            //portable though not the most efficient way of rounding to next power of two
+            number--;
+            number |= number >> 1;
+            number |= number >> 2;
+            number |= number >> 4;
+            number |= number >> 8;
+            number |= number >> 16;
+            number++;
+            return number;
         }
-        #endif
-        
         private uint[] GetReverseBitOrderedArray(uint length)//length of the returned array is padded to the next power of two
         {
             //This is far from the most efficient algorithm(and it allocates a LOT), but it works on any power of two, on any hardware, for any byte length
@@ -345,18 +189,54 @@ namespace Ocean
 
             
         }
-        private uint RoundingToHigherPowerOfTwo(uint number)//returns number if number is already a power of two
+        #endregion
+
+
+        #region Runtime
+        private void Update()
         {
-            //portable though not the most efficient way of rounding to next power of two
-            number--;
-            number |= number >> 1;
-            number |= number >> 2;
-            number |= number >> 4;
-            number |= number >> 8;
-            number |= number >> 16;
-            number++;
-            return number;
+            FourierComponents();
+            var pingPong = 0;//keeping these values outside the array is redundant, but is kept for clarity (ideally I'd prefer passing a struct to the buffer but unity doesn't allow it
+            
+            for (int i = 0; i < Mathf.Log(numberOfSamples, 2); i++)
+            {
+                //Vertical butterfly pass
+                _frequentUpdateData[0] = i;
+                _frequentUpdateData[1] = pingPong;
+                _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
+                oceanUpdateShader.Dispatch(_verticalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
+                pingPong = pingPong == 1 ? 0 : 1;
+            }
+            for (int i = 0; i < (MathF.Log(numberOfSamples, 2)); i++)
+            {
+                //horizontal butterfly pass
+                _frequentUpdateData[0] = i;//pass
+                _frequentUpdateData[1] = pingPong;//buffer
+                _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
+                oceanUpdateShader.Dispatch(_horizontalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
+                pingPong = pingPong == 1 ? 0 : 1;
+            }
+
+            _frequentUpdateData[1] = pingPong;
+            _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
+            //inversion and permutation pass
+            oceanUpdateShader.Dispatch(_permutationKernelIndex, numberOfSamples / 16, numberOfSamples / 16, 1);
+            
         }
+        
+        private float _t;//initialized to 0
+        private int _timeSpectrumKernel = 1;
+        private void FourierComponents()
+        {
+            
+            _t += Time.deltaTime;//might need to be looped back to 0
+            oceanUpdateShader.SetFloat("t",_t);
+            oceanUpdateShader.Dispatch(_timeSpectrumKernel,numberOfSamples/16,numberOfSamples/16,1);
+            
+        }
+        #endregion
+
+        #region CleanUp
         private void OnDestroy()
         {
             //TODO: Release buffers only used for initialisation at the end of start
@@ -368,6 +248,7 @@ namespace Ocean
             _constantParamBuffer.Release();
             
         }
+        #endregion
     }
     
 }

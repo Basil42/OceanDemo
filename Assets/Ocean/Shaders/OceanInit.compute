@@ -11,7 +11,7 @@ float2 WindDirection;
 float windSpeed;
 static const float g = 9.81;
 
-//put both h0_k(RG) and h0_minusK(BA) in the same texture to save read/write operation 
+//I put both h0_k(RG) and h0_minusK(BA) in the same texture to save read/write operation 
 RWTexture2D<float4> h0;
 Texture2D<float4> noise;
 SamplerState pointClampSampler;
@@ -30,7 +30,6 @@ float4 gaussRND(uint3 id)
 
     float4 rnd = float4(v0 * cos(u0), v0 * sin(u0), v1 * cos(u1), v1 * sin(u1));
     return rnd;
-    //return noiseValue;
 }
 
 [numthreads(16,16,1)]
@@ -61,7 +60,7 @@ void SpectrumGen(uint3 id : SV_DispatchThreadID)
 }
 
 RWTexture2D<float4> ButterflyTexture;//N*log2(N) dimensions
-StructuredBuffer<uint> bitReversedBuffer;// should be computed either at run time or when changing N. It could be that GPUs have a way of doing this bare metal, but I can't find it
+StructuredBuffer<uint> bitReversedBuffer;//should be computed either at startup or when changing N. Some hardware have native ways of doing this (I'm guessing IRM machines would)
 [numthreads(1,16,1)]//grouped by stage
 void ButterflyTextureGen(uint3 id: SV_dispatchThreadID)
 {
@@ -76,16 +75,6 @@ void ButterflyTextureGen(uint3 id: SV_dispatchThreadID)
     //several more optimisation are likely possible, but kernel only runs once (if the shader runs with it's initial parameters at all time)
     if(id.x ==0)
     {
-        
-        // if(butterflyWing)
-        // {
-        //     ButterflyTexture[id.xy] = float4(twiddle,bitReversedBuffer[id.y],bitReversedBuffer[id.y +1]);
-        // }
-        // else
-        // {
-        //     ButterflyTexture[id.xy] = float4(twiddle,bitReversedBuffer[id.y -1],bitReversedBuffer[id.y]);
-        // }
-
         //I think this is faster (no branching in exchange for 2 additional additions/subtractions), a tad less clear though
         int topIndex = id.y - int(butterflyWing ?  0 : 1);
         int botIndex = id.y + int(butterflyWing ? 1 : 0);

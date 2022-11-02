@@ -1,10 +1,8 @@
 #include <HLSLSupport.cginc>
-
 #include "ComplexOperators.compute"
-
+#pragma shader_feature PREVIS
 #pragma kernel ButterflyHorizontalCompute
 #pragma kernel ButterflyVerticalCompute
-//#pragma kernel ButterflyCompute
 #pragma kernel TimeSpectrum
 #pragma kernel InversionAndPermutation
 
@@ -13,7 +11,7 @@ Texture2D<float4> _butterflyTexture;
 //Apparently, you can pack these in "texture buffers" that have the same access optimization than textures
 RWStructuredBuffer<Complex3> pingPong0;
 RWStructuredBuffer<Complex3> pingPong1;
-RWTexture2D<float4> pingPongVis;
+
 #define M_PI 3.1415926535897932
 
 //got rid of the direction variable and simply calling the vertical and horizontal pass separately
@@ -42,15 +40,14 @@ void ButterflyHorizontalCompute(uint3 id : SV_DispatchThreadID)
         
         H = cmp_add(p,cmp_multiply(w,q));
         pingPong1[BufferIndex] = H;
-        pingPongVis[id.xy] = float4(p.dy.x,0,0,1);
+        
     }else//having an additional check here seems pointless
     {
         const Complex3 p = pingPong1[ButterFlyData.z + N*X.y];
         const Complex3 q = pingPong1[ButterFlyData.w + N*X.y];
         H = cmp_add(p,cmp_multiply(w,q));
         pingPong0[BufferIndex] = H;
-        pingPongVis[id.xy] = float4(p.dy.x,0,0,1);
-
+        
     }
 }
 
@@ -69,7 +66,7 @@ void ButterflyVerticalCompute(uint3 id : SV_DispatchThreadID)
 
         H = cmp_add(p, cmp_multiply(w,q));
         pingPong1[BufferIndex] = H;
-        pingPongVis[id.xy] = float4(p.dy.x,0,0,1);
+       
 
     }else
     {
@@ -78,8 +75,7 @@ void ButterflyVerticalCompute(uint3 id : SV_DispatchThreadID)
 
         H = cmp_add(p, cmp_multiply(w,q));
         pingPong0[BufferIndex] = H;
-        pingPongVis[id.xy] = float4(p.dy.x,0,0,1);
-
+        
     }
 }
 
@@ -90,28 +86,17 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
 {
     const int2 X = id.xy;
     const uint BufferIndex = id.x + id.y*N;
-    // float perms[] = {1.0, -1.0};
-    // int index = int(X.x +X.y) & 1;
-    // float perm = perms[index];
+    
     const float perm = (int(X.x + X.y) & 1) ? -1.0f : 1.0f;//true if x+y is odd
     
-    if(pingPong == 0)//pingPong here is considered const by the compiler and the branch will be optimized away
-    {
-        Complex3 pingPongData = pingPong0[BufferIndex];
-        const float3 h = float3(pingPongData.dx.x,pingPongData.dy.x,pingPongData.dz.x);//taking the real part of all components
-        displacement[X] = float4(perm*(h/float(N*N)),1);
-    }else
-    {
-        Complex3 pingPongData = pingPong1[BufferIndex];
-        const float3 h = float3(pingPongData.dx.x, pingPongData.dy.x, pingPongData.dz.x);
-        displacement[X] = float4(perm*(h/float(N*N)),1);
-    }
+    
+    Complex3 pingPongData = pingPong0[BufferIndex];//guaranteed to be the correct buffer as N is always pair
+    const float3 h = float3(pingPongData.dx.x,pingPongData.dy.x,pingPongData.dz.x);//taking the real part of all components
+    displacement[X] = float4(perm*(h/float(N*N)),1);
+    
 }
     float t;//this needs to be "tiled" somehow to not raise forever (and break)
-
-
-    RWStructuredBuffer<Complex3> tilde_hkt;//condensing the 3 textures the paper uses in a single buffer, I'd prefer something like Texture2d<float6> but that doesn't seem possible
-    RWTexture2D<float4> componentsVisual;
+    RWStructuredBuffer<Complex3> tilde_hkt;//a texture buffer might lay this out in memory like a texture
     
     [numthreads(16,16,1)]
     void TimeSpectrum(uint3 id: SV_dispatchThreadID)
@@ -141,13 +126,11 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
         //dx
         const float2 dx = float2(0.0,-K.x/mag);
         const float2 h_kt_dx = cmp_multiply(dx,h_kt_dy);
-        //dz (might be a misnomer due to unity orientation)
+        //dz
         const float2 dz = float2(0.0,-K.y/mag);
         const float2 h_kt_dz = cmp_multiply(dz, h_kt_dy);
         const Complex3 result = { h_kt_dx, h_kt_dy, h_kt_dz};
         tilde_hkt[id.x + id.y*N] = result;
-        
-        componentsVisual[id.xy] = float4(result.dy,0,1);
     
     }
     
