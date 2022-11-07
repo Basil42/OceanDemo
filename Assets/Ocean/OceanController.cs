@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.Serialization;
 
 namespace Ocean
@@ -19,6 +20,7 @@ namespace Ocean
         [Header("Resources")] 
         [SerializeField] Texture2D noiseTexture;
 
+        [Header("Scene")] [SerializeReference] private MeshRenderer surfaceRenderer;
         //GPU resources
         //using a single texture as they are always read from and written to at the same time (h0k is on rg h0minusk is ba)
         private RenderTexture _h0ValuesTexture;
@@ -38,7 +40,7 @@ namespace Ocean
         private int _permutationKernelIndex;
 
         #region Initialization
-
+        private static readonly int MainTex = Shader.PropertyToID("_MainTex");
         private void Start()
         {
             if (numberOfSamples <= 0) numberOfSamples = 1;
@@ -52,7 +54,7 @@ namespace Ocean
             
             ButterFlyTextureGeneration();
             BindTimeDependentBuffers();
-            
+            surfaceRenderer.material.SetTexture(MainTex,_displacementTexture,RenderTextureSubElement.Default);
             
         }
         private void BindTimeDependentBuffers()
@@ -226,6 +228,8 @@ namespace Ocean
         
         private float _t;//initialized to 0
         private int _timeSpectrumKernel = 1;
+        
+
         private void FourierComponents()
         {
             
