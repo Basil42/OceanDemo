@@ -33,24 +33,21 @@ Shader "Custom/OceanShader"
             //pre tesselation output. Suspicious that the only difference is semantics
             struct ControlPoint
             {
-                float4 vertex : INTERNALTESSPOS;//This semantic seems only "documented" in tutorials
+                float4 vertex : INTERNALTESSPOS;
                 float2 uv : TEXCOORD0;
-                float4 color : COLOR;//I can probably remove this
                 float3 normal : NORMAL;
             };
             struct Attributes
             {
                 float4 vertex : POSITION;
                 float2 uv : TEXCOORD0;
-                float4 color : COLOR;//I can probably remove this
                 float3 normal : NORMAL;
             };
 
             struct Varyings
             {
-                float4 vertex : POSITION;
+                float4 vertex : SV_POSITION;
                 float2 uv : TEXCOORD0;
-                float4 color : COLOR;//I can probably remove this
                 float3 normal : NORMAL;
             };
             CBUFFER_START(UnityPerMaterial)
@@ -71,7 +68,6 @@ Shader "Custom/OceanShader"
                 p.vertex = v.vertex;
                 p.uv = v.uv;
                 p.normal = v.normal;
-                p.color = v.color;
                 return  p;
             }
             struct TesselationFactors
@@ -123,7 +119,6 @@ Shader "Custom/OceanShader"
                 Displacement.y *= _HeightScaleFactor;
                 Displacement.xz *= _HorizontalScaleDampening;
                 output.vertex = TransformObjectToHClip(input.vertex.xyz + Displacement);//could add a multiplicative factor here
-                output.color = input.color;
                 output.normal = input.normal;
                 output.uv = input.uv;
                 return output;
@@ -140,7 +135,6 @@ Shader "Custom/OceanShader"
 
                 DomainCalc(vertex)
                 DomainCalc(uv)
-                DomainCalc(color)
                 DomainCalc(normal)
 
                 return vert(v);
