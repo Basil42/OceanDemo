@@ -7,14 +7,19 @@ Shader "Custom/OceanShader"
         _Weight ("Displacement amount", Range(0,1)) = 0
         _MaxTessDistance("Max Tess distance", Range(1,32)) = 20
         _Tess("Tesselation",Range(1,32)) = 20
+        _HeightScaleFactor("Height scale", Range(0,32)) = 5
+        _HorizontalScaleDampening("Horizontal Factor", Range(0,1)) = 0.5
+        _Opacity("Opactiy", Range(0,1)) = 0.7
     }
     SubShader
     {
-        Tags { "RenderType"="Opaque" "RenderPipeline" = "UniversalRenderPipeline" }
+        Tags { "Queue" = "Transparent" "RenderPipeline" = "UniversalRenderPipeline" }
         LOD 100
 
         Pass
         {
+            Blend SrcAlpha OneMinusSrcAlpha //"traditional" transparency
+            BlendOp Add
             HLSLPROGRAM
             #pragma vertex TesselationVertexProgram
             #pragma fragment frag
@@ -48,7 +53,14 @@ Shader "Custom/OceanShader"
                 float4 color : COLOR;//I can probably remove this
                 float3 normal : NORMAL;
             };
-
+            CBUFFER_START(UnityPerMaterial)
+            float _MaxTessDistance = 70.0f;
+            float _Tess;//intensity of the effect ?
+            float _Weight = 10.0f;
+            float _HeightScaleFactor;
+            float _HorizontalScaleDampening;// ideally it should be dependant on the local vertex density
+            float _Opacity;
+            CBUFFER_END
             sampler2D _MainTex;
             float4 _MainTex_ST;
 
@@ -74,8 +86,7 @@ Shader "Custom/OceanShader"
                 const float f = clamp(1.0 -(dist - minDist)/(maxDist - minDist),0.01,1.0)*tess;
                 return f;
             }
-            float _MaxTessDistance = 70.0f;
-            float _Tess;//intensity of the effect ?
+            
             TesselationFactors patchConstantFunction(InputPatch<ControlPoint,3> patch)
             {
                 const float minDist = 5.0;//move to uniform
@@ -104,13 +115,14 @@ Shader "Custom/OceanShader"
                 return patch[id];
             }
             
-            float _Weight = 10.0f;
+            
             Varyings vert (Attributes input)
             {
                 Varyings output;
                 float3 Displacement = tex2Dlod(_MainTex, float4(input.uv,0,0)).rgb;
-                
-                output.vertex = TransformObjectToHClip(input.vertex.xyz + Displacement.yxz);//could add a multiplicative factor here
+                Displacement.y *= _HeightScaleFactor;
+                Displacement.xz *= _HorizontalScaleDampening;
+                output.vertex = TransformObjectToHClip(input.vertex.xyz + Displacement);//could add a multiplicative factor here
                 output.color = input.color;
                 output.normal = input.normal;
                 output.uv = input.uv;
@@ -136,11 +148,12 @@ Shader "Custom/OceanShader"
             
             sampler2D _ShadingTexture;
             float4 _ShadingTexture_ST;
-
+            
             half4 frag (Varyings IN) : SV_Target
             {
                 // sample the texture
                 half4 col = tex2D(_MainTex, IN.uv);
+                col.a = _Opacity;
                 return col;
             }
             ENDHLSL
