@@ -3,7 +3,7 @@ Shader "Custom/OceanShader"
     Properties
     {
         _MainTex ("Displacement Texture", 2D) = "white" {}
-        _ShadingTexture("shading temp",2D) = "white" {}
+        _Color ("MainColor", Color) =  (.5,.5,.5,1)
         _Weight ("Displacement amount", Range(0,1)) = 0
         _MaxTessDistance("Max Tess distance", Range(1,32)) = 20
         _Tess("Tesselation",Range(1,32)) = 20
@@ -50,17 +50,18 @@ Shader "Custom/OceanShader"
                 float2 uv : TEXCOORD0;
                 float3 normal : NORMAL;
             };
-            CBUFFER_START(UnityPerMaterial)
+            CBUFFER_START(UnityPerMaterial)//actually probably don't need batching and should instead split this in multiple buffers to limit data transfers
             float _MaxTessDistance = 70.0f;
             float _Tess;//intensity of the effect ?
             float _Weight = 10.0f;
             float _HeightScaleFactor;
             float _HorizontalScaleDampening;// ideally it should be dependant on the local vertex density
             float _Opacity;
+            half4 _Color;
             CBUFFER_END
+            
             sampler2D _MainTex;
             float4 _MainTex_ST;
-
             //Surely you can get rid of this stage and just use the inital input with correct semantics
             ControlPoint TesselationVertexProgram(Attributes v)
             {
@@ -140,13 +141,11 @@ Shader "Custom/OceanShader"
                 return vert(v);
             }
             
-            sampler2D _ShadingTexture;
-            float4 _ShadingTexture_ST;
             
             half4 frag (Varyings IN) : SV_Target
             {
                 // sample the texture
-                half4 col = tex2D(_MainTex, IN.uv);
+                half4 col = _Color;
                 col.a = _Opacity;
                 return col;
             }
