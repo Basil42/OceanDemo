@@ -25,8 +25,12 @@ Shader "Custom/OceanShader"
             #pragma fragment frag
             #pragma hull hull
             #pragma domain domain
-            
-            
+            //VFACE semantic can be used to flip normal when seeing the water surface through itself. However, I'm skeptical that SoT does it this way and the "back" of the water must be shaded another way.
+            //Z ordering: if I'm rendering a 
+            //are specular lights in SoT faked ?(rn surface is unlit)
+            //"crest" detection ? SoT has a smooth transition to it's lighter and textured crests, probably need to pass the information in the fragment input
+            //Tesselation benchmark (there's probably a lot of room to optimize while keeping the look of SoT, quite difficult to retro engineer)
+            //I might need to generate a normal map from the displacement maps for specular reflections
             
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
@@ -49,6 +53,7 @@ Shader "Custom/OceanShader"
                 float4 vertex : SV_POSITION;
                 float2 uv : TEXCOORD0;
                 float3 normal : NORMAL;
+                half facing : V_FACE;
             };
             CBUFFER_START(UnityPerMaterial)//actually probably don't need batching and should instead split this in multiple buffers to limit data transfers
             float _MaxTessDistance = 70.0f;
@@ -140,13 +145,52 @@ Shader "Custom/OceanShader"
 
                 return vert(v);
             }
+
+            float2 randomVector(float2 UV)//taken from shader graph doc
+            {
+                float2x2 m = float2x2(15.27,47.63,99.41,89.98);
+                UV = frac(sin(mul(UV,m)) * 46839.32);
+                return float2(sin(UV.y)*0.5+0.5,cos(UV.x)*0.5+0.5);//removed offset, the fact that the shown code is wrong is a little worrying
+            }
+
+            void voronoi(const float2 UV,const float CellDensity, out float noiseValue)//Removed the double output, don't need the cells. A bit worried by the code output by shader graph
+            {
+                
+                float2 g = floor(UV * CellDensity);
+                float2 f = frac (UV * CellDensity);
+                
+                noiseValue = 8.0;//init
+                
+                for(int y = -1; y<=1;y++)//this should get unrolled by the compiler
+                {
+                    for(int x = -1;x <=1;x++)
+                    {
+                        const float2 lattice = float2(x,y);
+                        const float2 offset = randomVector(lattice + g);
+                        const float d = distance(lattice+ offset,f);
+                        if(d<noiseValue)
+                        {
+                            noiseValue = d;
+                        }
+                    }
+                }
+            }
             
+            void CrestShading(Varyings IN, inout half4 col)
+            {
+                //Can't generate the noise here without the whole cell system
+                //Y displacement threshold, easy but naive, and probably not pretty
+                //dY displacement threshold, more expensive, and makes areas between waves are to sort out from the crests
+                
+            }
             
+
             half4 frag (Varyings IN) : SV_Target
             {
                 // sample the texture
                 half4 col = _Color;
                 col.a = _Opacity;
+                
                 return col;
             }
             ENDHLSL
