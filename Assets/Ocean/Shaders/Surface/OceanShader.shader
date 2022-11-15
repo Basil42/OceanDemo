@@ -56,9 +56,6 @@ Shader "Custom/OceanShader"
                 float4 positionOS : INTERNALTESSPOS;
                 float2 uv : TEXCOORD0;
                 float3 normalOS : NORMAL;
-                #ifdef _NORMALMAP
-                float4 tangentOS : TANGENT;
-                #endif
                 //do not need a color, as it is global
                 
             };
@@ -67,9 +64,6 @@ Shader "Custom/OceanShader"
                 float4 positionOS : POSITION;
                 float2 uv : TEXCOORD0;
                 float3 normalOS : NORMAL;
-                #ifdef _NORMALMAP
-                float4 tangentOS : TANGENT;
-                #endif
                 //do not need a color, as it is global
                 
                 //UNITY_VERTEX_INPUT_INSTANCE_ID //mentionned by Cyanilux, leaving it here for reference, it could be useful
@@ -160,11 +154,8 @@ Shader "Custom/OceanShader"
                 Displacement.y *= _HeightScaleFactor;
                 Displacement.xz *= _HorizontalScaleDampening;
                 VertexPositionInputs position_inputs = GetVertexPositionInputs(input.positionOS.xyz + Displacement);
-                #ifdef _NORMALMAP
-					VertexNormalInputs normalInputs = GetVertexNormalInputs(input.normalOS.xyz, input.tangentOS);
-				#else
-					VertexNormalInputs normalInputs = GetVertexNormalInputs(input.normalOS.xyz);
-				#endif
+                VertexNormalInputs normalInputs = GetVertexNormalInputs(input.normalOS.xyz);
+				
                 
                 
                 
@@ -191,9 +182,7 @@ Shader "Custom/OceanShader"
                 DomainCalc(positionOS)
                 DomainCalc(uv)
                 DomainCalc(normalOS)
-                #ifdef _NORMALMAP
-                DomainCalc(tangentOS)
-                #endif
+                
                 
                 return vert(v);
             }
