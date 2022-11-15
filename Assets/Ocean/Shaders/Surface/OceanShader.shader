@@ -34,6 +34,7 @@ Shader "Custom/OceanShader"
             
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             //pre tesselation output. Suspicious that the only difference is semantics
             struct ControlPoint
             {
@@ -50,10 +51,9 @@ Shader "Custom/OceanShader"
 
             struct Varyings
             {
-                float4 vertex : SV_POSITION;
+                float4 positionCS : SV_POSITION;
                 float2 uv : TEXCOORD0;
                 float3 normal : NORMAL;
-                half facing : V_FACE;
             };
             CBUFFER_START(UnityPerMaterial)//actually probably don't need batching and should instead split this in multiple buffers to limit data transfers
             float _MaxTessDistance = 70.0f;
@@ -117,14 +117,14 @@ Shader "Custom/OceanShader"
                 return patch[id];
             }
             
-            
+            //templates have 2 includes that cannot be found
             Varyings vert (Attributes input)
             {
                 Varyings output;
                 float3 Displacement = tex2Dlod(_MainTex, float4(input.uv,0,0)).rgb;
                 Displacement.y *= _HeightScaleFactor;
                 Displacement.xz *= _HorizontalScaleDampening;
-                output.vertex = TransformObjectToHClip(input.vertex.xyz + Displacement);//could add a multiplicative factor here
+                output.positionCS = TransformObjectToHClip(input.vertex.xyz + Displacement);//could add a multiplicative factor here
                 output.normal = input.normal;
                 output.uv = input.uv;
                 return output;
@@ -184,9 +184,10 @@ Shader "Custom/OceanShader"
                 
             }
             
-
+            
             half4 frag (Varyings IN) : SV_Target
             {
+                //almost certain SoT as very primitive specular lighting with no shadow
                 // sample the texture
                 half4 col = _Color;
                 col.a = _Opacity;
