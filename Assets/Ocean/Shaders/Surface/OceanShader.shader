@@ -10,6 +10,7 @@ Shader "Custom/OceanShader"
         _HeightScaleFactor("Height scale", Range(0,32)) = 5
         _HorizontalScaleDampening("Horizontal Factor", Range(0,1)) = 0.5
         _Opacity("Opactiy", Range(0,1)) = 0.7
+        [Toggle(_NORMALMAP)] _NormalMapToggle("Normal maps mode", Float) = 0
     }
     SubShader
     {
@@ -25,6 +26,21 @@ Shader "Custom/OceanShader"
             #pragma fragment frag
             #pragma hull hull
             #pragma domain domain
+            //pragmas founds in https://github.com/Cyanilux/URP_ShaderCodeTemplates/blob/main/URP_SimpleLitTemplate.shader
+            //material keywords
+            #pragma shader_feature_local _RECEIVE_SHADOWS_OFF
+            #pragma shader_feature_local _NORMALMAP//might need it eventually
+            //URP keywords
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile _ _SHADOWS_SOFT
+			// #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            //no light map support for now
+			//#pragma multi_compile _ LIGHTMAP_SHADOW_MIXING // v10+ only, renamed from "_MIXED_LIGHTING_SUBTRACTIVE"
+			//#pragma multi_compile _ SHADOWS_SHADOWMASK // v10+ only
+            #define _SPECULAR_COLOR //always on in the template, remove if not referenced by URP code
+            
+
+            
             //VFACE semantic can be used to flip normal when seeing the water surface through itself. However, I'm skeptical that SoT does it this way and the "back" of the water must be shaded another way.
             //Z ordering: if I'm rendering a 
             //are specular lights in SoT faked ?(rn surface is unlit)
@@ -32,28 +48,47 @@ Shader "Custom/OceanShader"
             //Tesselation benchmark (there's probably a lot of room to optimize while keeping the look of SoT, quite difficult to retro engineer)
             //I might need to generate a normal map from the displacement maps for specular reflections
             
-
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/SurfaceInput.hlsl"
             //pre tesselation output. Suspicious that the only difference is semantics
             struct ControlPoint
             {
-                float4 vertex : INTERNALTESSPOS;
+                float4 positionOS : INTERNALTESSPOS;
                 float2 uv : TEXCOORD0;
-                float3 normal : NORMAL;
+                float3 normalOS : NORMAL;
+                #ifdef _NORMALMAP
+                float4 tangentOS : TANGENT;
+                #endif
+                //do not need a color, as it is global
+                
             };
             struct Attributes
             {
-                float4 vertex : POSITION;
+                float4 positionOS : POSITION;
                 float2 uv : TEXCOORD0;
-                float3 normal : NORMAL;
+                float3 normalOS : NORMAL;
+                #ifdef _NORMALMAP
+                float4 tangentOS : TANGENT;
+                #endif
+                //do not need a color, as it is global
+                
+                //UNITY_VERTEX_INPUT_INSTANCE_ID //mentionned by Cyanilux, leaving it here for reference, it could be useful
             };
 
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
                 float2 uv : TEXCOORD0;
-                float3 normal : NORMAL;
+                //here Cyan uses a lightmap related macro, skipping it for now
+                float3 positionWS : TEXCOORD2;//possibly useful, but I'd like it removed
+               
+                float3 normalWS : NORMAL;
+                float3 tangentWS : TANGENT;
+                //float3 bitangentWS : BITANGENT;
+                #if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPLATOR)
+                float4 shadowCoord : TEXCOORD7;
+                #endif
+                //vertex id can also be included here
             };
             CBUFFER_START(UnityPerMaterial)//actually probably don't need batching and should instead split this in multiple buffers to limit data transfers
             float _MaxTessDistance = 70.0f;
@@ -71,9 +106,9 @@ Shader "Custom/OceanShader"
             ControlPoint TesselationVertexProgram(Attributes v)
             {
                 ControlPoint p;
-                p.vertex = v.vertex;
+                p.positionOS = v.positionOS;
                 p.uv = v.uv;
-                p.normal = v.normal;
+                p.normalOS = v.normalOS;
                 return  p;
             }
             struct TesselationFactors
@@ -96,9 +131,9 @@ Shader "Custom/OceanShader"
 
                 TesselationFactors f;
 
-                const float edge0 = CalcDistanceTessFactor(patch[0].vertex, minDist, maxDist, _Tess);
-                const float edge1 = CalcDistanceTessFactor(patch[1].vertex, minDist, maxDist, _Tess);
-                const float edge2 = CalcDistanceTessFactor(patch[2].vertex, minDist, maxDist, _Tess);
+                const float edge0 = CalcDistanceTessFactor(patch[0].positionOS, minDist, maxDist, _Tess);
+                const float edge1 = CalcDistanceTessFactor(patch[1].positionOS, minDist, maxDist, _Tess);
+                const float edge2 = CalcDistanceTessFactor(patch[2].positionOS, minDist, maxDist, _Tess);
 
                 f.edge[0] = (edge1 + edge2)/2;
                 f.edge[1] = (edge2 + edge0)/2;
@@ -124,9 +159,23 @@ Shader "Custom/OceanShader"
                 float3 Displacement = tex2Dlod(_MainTex, float4(input.uv,0,0)).rgb;
                 Displacement.y *= _HeightScaleFactor;
                 Displacement.xz *= _HorizontalScaleDampening;
-                output.positionCS = TransformObjectToHClip(input.vertex.xyz + Displacement);//could add a multiplicative factor here
-                output.normal = input.normal;
+                VertexPositionInputs position_inputs = GetVertexPositionInputs(input.positionOS.xyz + Displacement);
+                #ifdef _NORMALMAP
+					VertexNormalInputs normalInputs = GetVertexNormalInputs(input.normalOS.xyz, input.tangentOS);
+				#else
+					VertexNormalInputs normalInputs = GetVertexNormalInputs(input.normalOS.xyz);
+				#endif
+                
+                
+                
+                output.positionCS = position_inputs.positionCS;
+                output.positionWS = position_inputs.positionWS;
+                //here I need an ifdef for normal maps. See cyan lit
+                output.normalWS = NormalizeNormalPerVertex(normalInputs.normalWS);
+                output.tangentWS = NormalizeNormalPerVertex(normalInputs.tangentWS);
+                //output.bitangentWS = NormalizeNormalPerVertex(normalInputs.bitangentWS);
                 output.uv = input.uv;
+                //not sure what SH is, possibly just shadows
                 return output;
             }
             [domain("tri")]
@@ -138,11 +187,14 @@ Shader "Custom/OceanShader"
                     patch[0].fieldName * barycentricCoordinates.x + \
                     patch[1].fieldName * barycentricCoordinates.y + \
                     patch[2].fieldName * barycentricCoordinates.z;
-
-                DomainCalc(vertex)
+                
+                DomainCalc(positionOS)
                 DomainCalc(uv)
-                DomainCalc(normal)
-
+                DomainCalc(normalOS)
+                #ifdef _NORMALMAP
+                DomainCalc(tangentOS)
+                #endif
+                
                 return vert(v);
             }
 
@@ -187,11 +239,38 @@ Shader "Custom/OceanShader"
             
             half4 frag (Varyings IN) : SV_Target
             {
-                //almost certain SoT as very primitive specular lighting with no shadow
-                // sample the texture
-                half4 col = _Color;
-                col.a = _Opacity;
-                
+                //all of this smells like a complicated cast, probably can be avoided with good semantics
+                SurfaceData surface_data = (SurfaceData)0;
+                //"initialize surface data"
+                surface_data.alpha = _Opacity;
+                surface_data.albedo = _Color.rgb;
+                surface_data.normalTS = TransformWorldToTangent(IN.normalWS,CreateTangentToWorld(IN.normalWS,IN.tangentWS,1));
+                surface_data.metallic = 1.0h;
+                //wild guess about what would be on a gloss map
+                surface_data.specular = half3(1.0h,1.0h,1.0h);//might need to just be white
+                surface_data.smoothness = 1.0h;
+
+                InputData input_data = (InputData)0;
+                input_data.positionWS = IN.positionWS;
+
+                half3 viewDirWS = GetWorldSpaceNormalizeViewDir(input_data.positionWS);
+                input_data.normalWS = IN.normalWS;
+                viewDirWS = SafeNormalize(viewDirWS);
+                input_data.viewDirectionWS = viewDirWS;
+                #if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPLATOR)
+                input_data.shadowCoord = IN.shadowCoord;
+                #elif defined(MAIN_LIGHT_CALCULATE_SHADOWS)
+                input_data.shadowCoord = TransformWorldToShadowCoord(input_data.positionWS);
+                #else
+                input_data.shadowCoord = float4(0,0,0,0);
+                #endif
+                //ignoring fog
+
+                //ignoring lightmap stuff
+                //end of data init
+                half4 col = UniversalFragmentBlinnPhong(input_data,surface_data);
+                //col.a = _Opacity;
+                //ignoring fog
                 return col;
             }
             ENDHLSL
