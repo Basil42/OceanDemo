@@ -40,7 +40,7 @@ namespace Ocean
         private int _permutationKernelIndex;
 
         #region Initialization
-        private static readonly int MainTex = Shader.PropertyToID("_MainTex");
+        private static readonly int DisplacementTextureMaterialID = Shader.PropertyToID("_DisplacementTex");
         private void Start()
         {
             if (numberOfSamples <= 0) numberOfSamples = 1;
@@ -54,7 +54,7 @@ namespace Ocean
             
             ButterFlyTextureGeneration();
             BindTimeDependentBuffers();
-            surfaceRenderer.material.SetTexture(MainTex,_displacementTexture,RenderTextureSubElement.Default);
+            surfaceRenderer.material.SetTexture(DisplacementTextureMaterialID,_displacementTexture,RenderTextureSubElement.Default);
             
         }
         private void BindTimeDependentBuffers()

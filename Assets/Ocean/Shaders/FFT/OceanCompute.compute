@@ -1,5 +1,6 @@
 #include <HLSLSupport.cginc>
 #include "ComplexOperators.compute"
+//#define _NORMALMAP
 #pragma shader_feature PREVIS
 #pragma kernel ButterflyHorizontalCompute
 #pragma kernel ButterflyVerticalCompute
@@ -23,6 +24,10 @@ CBUFFER_END
 CBUFFER_START(RarelyUpdated)
 int N;
 int L;
+#ifdef _NORMALMAP
+float _HeightScaleFactor;
+float _HorizontalScaleDampening;
+#endif
 CBUFFER_END
 
 [numthreads(16,16,1)]
@@ -78,8 +83,13 @@ void ButterflyVerticalCompute(uint3 id : SV_DispatchThreadID)
         
     }
 }
-
-
+#ifdef _NORMALMAP
+RWTexture2D<float4> normalMap;
+void ComputeNormal(uint3 id)
+{
+    
+}
+#endif
 RWTexture2D<float4> displacement;
 [numthreads(16,16,1)]
 void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
@@ -93,7 +103,9 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
     Complex3 pingPongData = pingPong0[BufferIndex];//guaranteed to be the correct buffer as N is always pair
     const float3 h = float3(pingPongData.dx.x,pingPongData.dy.x,pingPongData.dz.x);//taking the real part of all components
     displacement[X] = float4(perm*(h/float(N*N)),1);
-    
+    #ifdef _NORMALMAP
+    ComputeNormal(id);
+    #endif
 }
     float t;//this needs to be "tiled" somehow to not raise forever (and break)
     RWStructuredBuffer<Complex3> tilde_hkt;//a texture buffer might lay this out in memory like a texture

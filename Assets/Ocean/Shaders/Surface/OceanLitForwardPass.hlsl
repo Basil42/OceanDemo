@@ -97,24 +97,28 @@ ControlPoint hull(InputPatch<ControlPoint,3> patch, uint id : SV_OutputControlPo
 Varyings vert (Attributes input)
 {
     Varyings output = (Varyings)0;
-    float3 Displacement = tex2Dlod(_MainTex, float4(input.uv,0,0)).rgb;
+    output.uv = TRANSFORM_TEX(input.uv,_DisplacementTex);
+
+    
+    float3 Displacement = _DisplacementTex.SampleLevel(sampler_DisplacementTex,output.uv,0);//tex2Dlod(sampler_DisplacementTex,float4(input.uv,0,0)).rgb;
     Displacement.y *= _HeightScaleFactor;
     Displacement.xz *= _HorizontalScaleDampening;
     VertexPositionInputs position_inputs = GetVertexPositionInputs(input.positionOS.xyz + Displacement);
     VertexNormalInputs normalInputs = GetVertexNormalInputs(input.normalOS,input.tangentOS);
-                
+    
     output.positionCS = position_inputs.positionCS;
     output.positionWS = position_inputs.positionWS;
     //here I need an ifdef for normal maps. See cyan lit
-    output.normalWS = normalInputs.normalWS;
+    
+    output.normalWS = normalInputs.normalWS;//need to recalculate normals here
     //this is wrapped in keywords in the lit shader
     real sign = input.tangentOS.w * GetOddNegativeScale();
     output.tangentWS = half4(normalInputs.tangentWS.xyz,sign);
     
-    output.uv = input.uv;
+    
 
-    half3 viewDirWS = GetWorldSpaceNormalizeViewDir(position_inputs.positionWS);
-    half3 viewDirTS = GetViewDirectionTangentSpace(output.tangentWS, output.normalWS,viewDirWS);
+    const half3 viewDirWS = GetWorldSpaceNormalizeViewDir(position_inputs.positionWS);
+    const half3 viewDirTS = GetViewDirectionTangentSpace(output.tangentWS, output.normalWS,viewDirWS);
     output.viewDirTS = viewDirTS;
     half fogFactor = 0;//set to 0 to be computed in the fragment shader
     #ifdef _ADDITIONAL_LIGHTS_VERTEX
@@ -150,7 +154,7 @@ void InitializeInputData(Varyings input, half3 normalTS,out InputData inputData)
 {
     inputData = (InputData)0;
     inputData.positionWS = input.positionWS;
-    half3 viewDirWS = GetWorldSpaceNormalizeViewDir(input.positionWS);//I already have a call of this at a previous stage
+    const half3 viewDirWS = GetWorldSpaceNormalizeViewDir(input.positionWS);//I already have a call of this at a previous stage
     inputData.normalWS = input.normalWS;
     inputData.normalWS = NormalizeNormalPerPixel(inputData.normalWS);
     inputData.viewDirectionWS = viewDirWS;
@@ -174,6 +178,11 @@ void InitializeInputData(Varyings input, half3 normalTS,out InputData inputData)
 
 half4 frag (Varyings IN) : SV_Target
 {
+    // float3 pos_dx = ddx(IN.positionWS);
+    // float3 pos_dy = ddy(IN.positionWS) * _ProjectionParams.x;
+    //
+    // IN.normalWS = cross(pos_dx,pos_dy);//this isn't a world normal, probably a clip one(ish)
+    // float3 normalTS = TransformWorldToTangent(IN.normalWS,CreateTangentToWorld(IN.normalWS,pos_dx,1.0f));
     //No need for ids
     SurfaceData surface_data;
     InitializeOceanLitSurfaceData(IN.uv,surface_data,IN.normalWS);
@@ -182,8 +191,9 @@ half4 frag (Varyings IN) : SV_Target
     InitializeInputData(IN,surface_data.normalTS,input_data);
 
     half4 color = UniversalFragmentPBR(input_data,surface_data);
-
+    
     color.rgb = MixFog(color.rgb, input_data.fogCoord);
+    //color = half4(IN.normalWS,_Opacity);
     return color;
 }
 #endif
