@@ -41,21 +41,37 @@ namespace Ocean
 
         #region Initialization
         private static readonly int DisplacementTextureMaterialID = Shader.PropertyToID("_DisplacementTex");
+        private static readonly int NormalMapTextureMaterialID = Shader.PropertyToID("_NormalMap");
+        private static readonly int HeightScalingMaterialID = Shader.PropertyToID("_HeightScaleFactor");
+        private static readonly int HorizontalScalingMaterialID = Shader.PropertyToID("_HorizontalScaleDampening");
         private void Start()
         {
             if (numberOfSamples <= 0) numberOfSamples = 1;
             numberOfSamples = (int)RoundingToHigherPowerOfTwo(Convert.ToUInt32(numberOfSamples));//
             //check number of sample and pad to power of 2 if necessary
-            _constantParamBuffer = new ComputeBuffer(2, sizeof(int), ComputeBufferType.Constant);
-            oceanInitShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*4);
-            oceanUpdateShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*4);
-            _constantParamBuffer.SetData(new [] {numberOfSamples,patchSize });
+            _constantParamBuffer = new ComputeBuffer(5, sizeof(int), ComputeBufferType.Constant);
+            oceanInitShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*5);
+            oceanUpdateShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*5);
+            var patchStep = GetComponent<MeshRenderer>().localBounds.size.x / numberOfSamples;
+            //int testInt = 1;
+            byte[] bufferData = new byte[20];
+            BitConverter.GetBytes(numberOfSamples).CopyTo(bufferData,0);
+            BitConverter.GetBytes(patchSize).CopyTo(bufferData,4);
+            BitConverter.GetBytes(patchStep).CopyTo(bufferData,8);
+            //scling factors
+            BitConverter.GetBytes(surfaceRenderer.material.GetFloat(HorizontalScalingMaterialID)).CopyTo(bufferData,12);
+            BitConverter.GetBytes(surfaceRenderer.material.GetFloat(HeightScalingMaterialID)).CopyTo(bufferData,16);
+            
+            
+            _constantParamBuffer.SetData(bufferData);
+            
             InitialSpectrumGeneration();
             
             ButterFlyTextureGeneration();
             BindTimeDependentBuffers();
             surfaceRenderer.material.SetTexture(DisplacementTextureMaterialID,_displacementTexture,RenderTextureSubElement.Default);
             
+            Debug.Log("stop");
         }
         private void BindTimeDependentBuffers()
         {

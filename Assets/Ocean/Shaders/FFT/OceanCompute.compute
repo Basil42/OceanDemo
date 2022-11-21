@@ -1,11 +1,14 @@
 #include <HLSLSupport.cginc>
 #include "ComplexOperators.compute"
-//#define _NORMALMAP
+#define _NORMALMAP
 #pragma shader_feature PREVIS
 #pragma kernel ButterflyHorizontalCompute
 #pragma kernel ButterflyVerticalCompute
 #pragma kernel TimeSpectrum
 #pragma kernel InversionAndPermutation
+#ifdef _NORMALMAP
+#pragma kernel ComputeNormal
+#endif
 
 Texture2D<float4> h0;
 Texture2D<float4> _butterflyTexture;
@@ -25,8 +28,8 @@ CBUFFER_START(RarelyUpdated)
 int N;
 int L;
 #ifdef _NORMALMAP
-float _HeightScaleFactor;
-float _HorizontalScaleDampening;
+float pixelStep;//distance in Unity units between each horizontal pixel (as real dimensions are lost to concession made to float precision)
+float2 scalingFactors;//obtain from the ocean shader to scale the displacement, horizontal factor in x, vertical factor in y
 #endif
 CBUFFER_END
 
@@ -83,14 +86,40 @@ void ButterflyVerticalCompute(uint3 id : SV_DispatchThreadID)
         
     }
 }
+RWTexture2D<float4> displacement;
 #ifdef _NORMALMAP
 RWTexture2D<float4> normalMap;
-void ComputeNormal(uint3 id)
+float3 getPositionFromDisplacement(int2 index)
 {
+    float3 result = displacement[index].xyz;
+    result.xz *= scalingFactors.x;
+    result.xz += index * pixelStep;
+    result.y *= scalingFactors.y;
+    return result;
+}
+[numthreads(8,8,1)]
+void ComputeNormal(uint3 id : SV_DispatchThreadID)//working on 2x2 pixel quads, choose the number of threads accordingly
+{
+    const int2 index00 = id.xy*2;
+    float3 pixel00 = getPositionFromDisplacement(index00);
+    const int2 index01 = int2(index00.x,index00.y+1);
+    float3 pixel01 =getPositionFromDisplacement(index01);
+    const int2 index10 = int2(index00.x+1,index00.y);
+    float3 pixel10 = getPositionFromDisplacement(index10);
+    const int2 index11 = int2(index10.x,index01.y);
+    float3 pixel11 = getPositionFromDisplacement(index11);
+    float3 ddx0 = pixel01.xyz -pixel00.xyz;
+    float3 ddx1 = pixel11.xyz -pixel10.xyz;
+    float3 ddy0 = pixel10.xyz - pixel00.xyz;
+    float3 ddy1 = pixel11.xyz - pixel01.xyz;
+    normalMap[index00] = float4(normalize(cross(ddx0,ddy0)),1.0);//if the normal ends up misoriented, it means the displacement allows vertices to "cross", which might be blamed on tesselation (displacement should probably be modulated by vertex density)
+    normalMap[index01] = float4(normalize(cross(ddx0,ddy1)),1.0);
+    normalMap[index10] = float4(normalize(cross(ddx1,ddy0)),1.0);
+    normalMap[index11] = float4(normalize(cross(ddx1,ddy1)),1.0);
     
 }
 #endif
-RWTexture2D<float4> displacement;
+
 [numthreads(16,16,1)]
 void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
 {
@@ -103,9 +132,6 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
     Complex3 pingPongData = pingPong0[BufferIndex];//guaranteed to be the correct buffer as N is always pair
     const float3 h = float3(pingPongData.dx.x,pingPongData.dy.x,pingPongData.dz.x);//taking the real part of all components
     displacement[X] = float4(perm*(h/float(N*N)),1);
-    #ifdef _NORMALMAP
-    ComputeNormal(id);
-    #endif
 }
     float t;//this needs to be "tiled" somehow to not raise forever (and break)
     RWStructuredBuffer<Complex3> tilde_hkt;//a texture buffer might lay this out in memory like a texture

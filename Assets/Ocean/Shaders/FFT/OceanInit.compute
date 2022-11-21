@@ -1,10 +1,11 @@
 #pragma kernel SpectrumGen
 #pragma kernel ButterflyTextureGen
 #include <HLSLSupport.cginc>
-
+#define _NORMALMAP
 CBUFFER_START(RarelyUpdated)
 int N;//sample size
 int L;//most likely the patch size
+//this buffer is currently shared with the OceanCompute shader, in which it contains more values
 CBUFFER_END
 float A;//??
 float2 WindDirection;
@@ -46,7 +47,7 @@ void SpectrumGen(uint3 id : SV_DispatchThreadID)
     const float h0k = clamp(sqrt((A/(magSq * magSq))
         * pow(abs(dot(normalize(K), normalize(WindDirection))),kwExponent)
         * exp(-(1.0/(magSq *L_ * L_)))
-        * exp(-magSq * pow(L/2000.0,2.0)))/ sqrt(2.0),-4000,4000);//not sure where the 2000 factor comes from, break it down on paper
+        * exp(-magSq * pow(L/2000.0,2.0)))/ sqrt(2.0),-4000,4000);//the 2000 factor seems to be to avoid precision issues (significant wave actually happen only on high patch size
 
     //sqrt(Ph(-k)/sqrt(2)
     const float h0_minusK = clamp(sqrt((A/(magSq * magSq))

@@ -1,12 +1,16 @@
-﻿#ifndef OCEAN_LIT_INPUT
+﻿
+#ifndef OCEAN_LIT_INPUT
 #define OCEAN_LIT_INPUT
-#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+// #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/SurfaceInput.hlsl"
-
+#include <HLSLSupport.cginc>
 //lit template has a whole include file, i just need my one texture
-TEXTURE2D(_DisplacementTex);
-SAMPLER(sampler_DisplacementTex);
+UNITY_DECLARE_TEX2D(_DisplacementTex);//needs to be a point sampler
 
+
+#ifdef _NORMALMAP
+UNITY_DECLARE_TEX2D_NOSAMPLER(_NormalTexture)
+#endif
 CBUFFER_START(UnityPerMaterial)//actually probably don't need batching and should instead split this in multiple buffers to limit data transfers
 float _MaxTessDistance = 70.0f;
 float _Tess;//intensity of the effect ?
