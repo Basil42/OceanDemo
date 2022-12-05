@@ -29,7 +29,8 @@ int N;
 int L;
 #ifdef _NORMALMAP
 float pixelStep;//distance in Unity units between each horizontal pixel (as real dimensions are lost to concession made to float precision)
-float2 scalingFactors;//obtain from the ocean shader to scale the displacement, horizontal factor in x, vertical factor in y
+float HorizontalScaling;
+float VerticalScaling;
 #endif
 CBUFFER_END
 
@@ -89,33 +90,48 @@ void ButterflyVerticalCompute(uint3 id : SV_DispatchThreadID)
 RWTexture2D<float4> displacement;
 #ifdef _NORMALMAP
 RWTexture2D<float4> normalMap;
-float3 getPositionFromDisplacement(int2 index)
+float3 getPositionFromDisplacement(uint2 index)
 {
     float3 result = displacement[index].xyz;
-    result.xz *= scalingFactors.x;
-    result.xz += index * pixelStep;
-    result.y *= scalingFactors.y;
+    uint2 localIndex = index % 2;
+    result.xz *= HorizontalScaling;
+    result.x += localIndex.x *pixelStep;
+    result.z += localIndex.y *pixelStep;
+    result.y *= VerticalScaling;
     return result;
 }
 [numthreads(8,8,1)]
 void ComputeNormal(uint3 id : SV_DispatchThreadID)//working on 2x2 pixel quads, choose the number of threads accordingly
 {
-    const int2 index00 = id.xy*2;
-    float3 pixel00 = getPositionFromDisplacement(index00);
-    const int2 index01 = int2(index00.x,index00.y+1);
-    float3 pixel01 =getPositionFromDisplacement(index01);
-    const int2 index10 = int2(index00.x+1,index00.y);
-    float3 pixel10 = getPositionFromDisplacement(index10);
-    const int2 index11 = int2(index10.x,index01.y);
-    float3 pixel11 = getPositionFromDisplacement(index11);
-    float3 ddx0 = pixel01.xyz -pixel00.xyz;
-    float3 ddx1 = pixel11.xyz -pixel10.xyz;
-    float3 ddy0 = pixel10.xyz - pixel00.xyz;
-    float3 ddy1 = pixel11.xyz - pixel01.xyz;
-    normalMap[index00] = float4(normalize(cross(ddx0,ddy0)),1.0);//if the normal ends up misoriented, it means the displacement allows vertices to "cross", which might be blamed on tesselation (displacement should probably be modulated by vertex density)
-    normalMap[index01] = float4(normalize(cross(ddx0,ddy1)),1.0);
-    normalMap[index10] = float4(normalize(cross(ddx1,ddy0)),1.0);
-    normalMap[index11] = float4(normalize(cross(ddx1,ddy1)),1.0);
+    const uint2 index00 = id.xy*2;
+    const uint2 index01 = uint2(index00.x,index00.y+1);
+    const uint2 index10 = uint2(index00.x+1,index00.y);
+    const uint2 index11 = uint2(index10.x,index01.y);
+
+    float3 position00 = getPositionFromDisplacement(index00);
+    float3 position01 = getPositionFromDisplacement(index01);
+    float3 position10 = getPositionFromDisplacement(index10);
+    float3 position11 = getPositionFromDisplacement(index11);
+    
+    const float3 ddx0 = (position00.xyz - position10.xyz)/(position00.x - position10.x);
+    const float3 ddx1 = (position01.xyz - position11.xyz)/(position01.x - position11.x);
+    const float3 ddy0 = (position00.xyz - position01.xyz)/(position00.z - position01.z);
+    const float3 ddy1 = (position10.xyz - position11.xyz)/(position10.z - position11.z);
+
+    float3 normal00 = float3(normalize(cross(ddx0,ddy0)));
+    float3 normal01 = float3(normalize(cross(ddx0,ddy1)));
+    float3 normal10 = float3(normalize(cross(ddx1,ddy0)));
+    float3 normal11 = float3(normalize(cross(ddx1,ddy1)));
+
+    const int sign00 = sign(normal00.y);
+    const int sign01 = sign(normal01.y);
+    const int sign10 = sign(normal10.y);
+    const int sign11 = sign(normal11.y);
+
+    normalMap[index00] = float4(sign00 * normal00,1.0);
+    normalMap[index01] = float4(sign01 * normal01,1.0);
+    normalMap[index10] = float4(sign10 * normal10,1.0);
+    normalMap[index11] = float4(sign11 * normal11,1.0);
     
 }
 #endif

@@ -9,8 +9,6 @@ struct Attributes
 {
     float4 positionOS : POSITION;
     float2 uv : TEXCOORD0;
-    float3 normalOS : NORMAL;
-    float4 tangentOS : TANGENT;
     float2 staticLightmapUV   : TEXCOORD1;
     float2 dynamicLightmapUV  : TEXCOORD2;
                 
@@ -20,8 +18,6 @@ struct ControlPoint
 {
     float4 positionOS : INTERNALTESSPOS;
     float2 uv : TEXCOORD0;
-    float3 normalOS : NORMAL;
-    float4 tangentOS : TANGENT;
     float2 staticLightmapUV   : TEXCOORD1;
     float2 dynamicLightmapUV  : TEXCOORD2;
     //do not need a color, as it is global
@@ -33,7 +29,7 @@ struct Varyings
     float2 uv : TEXCOORD0;
     float3 positionWS : TEXCOORD2;//possibly useful, but I'd like it removed
     float3 normalWS : NORMAL;
-    half4 tangentWS : TANGENT;//xyz is the vector, w is a sign
+    float4 tangentWS : TANGENT;
     #ifdef _ADDITIONAL_LIGHTS_VERTEX
     half4 fogFactorAndVertexLight : TEXCOORD5;// x: fogFactor, yzw: vertex light
     #else
@@ -49,8 +45,7 @@ ControlPoint TesselationVertexProgram(Attributes v)
     ControlPoint p;
     p.positionOS = v.positionOS;
     p.uv = v.uv;
-    p.normalOS = v.normalOS;
-    p.tangentOS = v.tangentOS;
+    
     p.dynamicLightmapUV = v.dynamicLightmapUV;
     p.staticLightmapUV = v.staticLightmapUV;
     return  p;
@@ -93,27 +88,34 @@ ControlPoint hull(InputPatch<ControlPoint,3> patch, uint id : SV_OutputControlPo
 {
     return patch[id];
 }
-
+float normalFiltering;
 Varyings vert (Attributes input)
 {
     Varyings output = (Varyings)0;
     output.uv = TRANSFORM_TEX(input.uv,_DisplacementTex);
 
     
-    float3 Displacement = _DisplacementTex.SampleLevel(sampler_DisplacementTex,output.uv,0);//tex2Dlod(sampler_DisplacementTex,float4(input.uv,0,0)).rgb;
+    float3 Displacement = _DisplacementTex.SampleLevel(bilinear_clamp_sampler,output.uv,0).rgb;//tex2Dlod(sampler_DisplacementTex,float4(input.uv,0,0)).rgb;
     Displacement.y *= _HeightScaleFactor;
     Displacement.xz *= _HorizontalScaleDampening;
     VertexPositionInputs position_inputs = GetVertexPositionInputs(input.positionOS.xyz + Displacement);
-    VertexNormalInputs normalInputs = GetVertexNormalInputs(input.normalOS,input.tangentOS);
+    float3 normalOS = _NormalTexture.SampleLevel(bilinear_clamp_sampler,output.uv,0).rgb;
+    //these tangent calc are wrong
+    
+    // float3 tangentCandidate1 = cross( normalOS,float3(0,0,1));
+    // float3 tangentCandidate2 = cross( normalOS,float3(1,0,0));
+    float4 tangentOS = float4(normalOS.y +normalOS.z,normalOS.z - normalOS.x,-normalOS.x-normalOS.y,1.0f);//float4(length(tangentCandidate1) > length(tangentCandidate2) ? tangentCandidate1 : tangentCandidate2,GetOddNegativeScale());//
+    VertexNormalInputs normalInputs = GetVertexNormalInputs(normalOS,tangentOS);
     
     output.positionCS = position_inputs.positionCS;
     output.positionWS = position_inputs.positionWS;
     //here I need an ifdef for normal maps. See cyan lit
-    
-    output.normalWS = normalInputs.normalWS;//need to recalculate normals here
+    output.normalWS = normalInputs.normalWS;
     //this is wrapped in keywords in the lit shader
-    real sign = input.tangentOS.w * GetOddNegativeScale();
-    output.tangentWS = half4(normalInputs.tangentWS.xyz,sign);
+
+    
+    
+    output.tangentWS = half4(normalInputs.tangentWS.xyz,1.0f);
     
     
 
@@ -144,8 +146,6 @@ Varyings domain(TesselationFactors factors, OutputPatch<ControlPoint,3> patch, f
                 
     DomainCalc(positionOS)
     DomainCalc(uv)
-    DomainCalc(normalOS)
-    DomainCalc(tangentOS)
     DomainCalc(staticLightmapUV);
     DomainCalc(dynamicLightmapUV);
     return vert(v);
@@ -176,24 +176,25 @@ void InitializeInputData(Varyings input, half3 normalTS,out InputData inputData)
     inputData.shadowMask = SAMPLE_SHADOWMASK(staticLightmapUV);
 }
 
+float NormalVis;
+float TangentVis;
+
 half4 frag (Varyings IN) : SV_Target
 {
-    // float3 pos_dx = ddx(IN.positionWS);
-    // float3 pos_dy = ddy(IN.positionWS) * _ProjectionParams.x;
-    //
-    // IN.normalWS = cross(pos_dx,pos_dy);//this isn't a world normal, probably a clip one(ish)
-    // float3 normalTS = TransformWorldToTangent(IN.normalWS,CreateTangentToWorld(IN.normalWS,pos_dx,1.0f));
-    //No need for ids
+    IN.normalWS = normalFiltering ? _NormalTexture.SampleLevel(bilinear_clamp_sampler,IN.uv,0) : _NormalTexture.SampleLevel(point_clamp_sampler,IN.uv,0);
+    const float3 normalTS = normalFiltering ? float3(0.0,-1.0,0.0) : float3(0.0,0.0,1.0);//TransformWorldToTangent(IN.normalWS,CreateTangentToWorld(IN.normalWS,IN.tangentWS.xyz,IN.tangentWS.w));//always return 0,0,1
+    // //No need for ids
     SurfaceData surface_data;
-    InitializeOceanLitSurfaceData(IN.uv,surface_data,IN.normalWS);
-
+    InitializeOceanLitSurfaceData(IN.uv,surface_data,normalTS);
+    
     InputData input_data;
     InitializeInputData(IN,surface_data.normalTS,input_data);
-
+    
     half4 color = UniversalFragmentPBR(input_data,surface_data);
     
     color.rgb = MixFog(color.rgb, input_data.fogCoord);
-    //color = half4(IN.normalWS,_Opacity);
+    if(NormalVis)color.rgb = _NormalTexture.Sample(bilinear_clamp_sampler,IN.uv);
+    if(TangentVis)color.rgb = IN.tangentWS;
     return color;
 }
 #endif

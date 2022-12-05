@@ -26,6 +26,7 @@ namespace Ocean
         private RenderTexture _h0ValuesTexture;
         private RenderTexture _butterflyTexture;
         private RenderTexture _displacementTexture;//dx in red dy in green, dz in blue
+        private RenderTexture _normalTexture;
         private ComputeBuffer _fourierComponentBuffer;//Using a buffer because I can't fit a float6 in a texture
         private ComputeBuffer _pingPongBuffer;
         private ComputeBuffer _bitReverseIndexes;
@@ -39,11 +40,16 @@ namespace Ocean
         private int _verticalButterflyPassKernelIndex;
         private int _permutationKernelIndex;
 
-        #region Initialization
         private static readonly int DisplacementTextureMaterialID = Shader.PropertyToID("_DisplacementTex");
-        private static readonly int NormalMapTextureMaterialID = Shader.PropertyToID("_NormalMap");
+        private static readonly int NormalMapTextureMaterialID = Shader.PropertyToID("_NormalTexture");
         private static readonly int HeightScalingMaterialID = Shader.PropertyToID("_HeightScaleFactor");
         private static readonly int HorizontalScalingMaterialID = Shader.PropertyToID("_HorizontalScaleDampening");
+        
+        //debug
+        private bool _textureDump = true;
+        #region Initialization
+        
+        
         private void Start()
         {
             if (numberOfSamples <= 0) numberOfSamples = 1;
@@ -53,6 +59,7 @@ namespace Ocean
             oceanInitShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*5);
             oceanUpdateShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*5);
             var patchStep = GetComponent<MeshRenderer>().localBounds.size.x / numberOfSamples;
+            Debug.Log(GetComponent<MeshRenderer>().localBounds.size.x);
             //int testInt = 1;
             byte[] bufferData = new byte[20];
             BitConverter.GetBytes(numberOfSamples).CopyTo(bufferData,0);
@@ -64,14 +71,12 @@ namespace Ocean
             
             
             _constantParamBuffer.SetData(bufferData);
-            
             InitialSpectrumGeneration();
             
             ButterFlyTextureGeneration();
             BindTimeDependentBuffers();
             surfaceRenderer.material.SetTexture(DisplacementTextureMaterialID,_displacementTexture,RenderTextureSubElement.Default);
-            
-            Debug.Log("stop");
+            surfaceRenderer.material.SetTexture(NormalMapTextureMaterialID,_normalTexture,RenderTextureSubElement.Default);
         }
         private void BindTimeDependentBuffers()
         {
@@ -104,10 +109,15 @@ namespace Ocean
             //Not convinced yet that the input buffer can't be predicted at build time, binding both ping pong buffer for now
             oceanUpdateShader.SetBuffer(_permutationKernelIndex,"pingPong0",_fourierComponentBuffer);
             oceanUpdateShader.SetBuffer(_permutationKernelIndex,"pingPong1",_pingPongBuffer);
+            //textures
             _displacementTexture =
                 new RenderTexture(numberOfSamples, numberOfSamples, 0,RenderTextureFormat.ARGBFloat) {enableRandomWrite = true, filterMode = FilterMode.Point};//Default format, wasting the alpha channel but R32G32B32 isn't supported everywhere
             oceanUpdateShader.SetTexture(_permutationKernelIndex,"displacement",_displacementTexture);
-
+            _normalComputeKernelIndex = oceanUpdateShader.FindKernel("ComputeNormal");
+            _normalTexture = new RenderTexture(numberOfSamples, numberOfSamples, 0, RenderTextureFormat.ARGBFloat)//probably don't need full float32
+                { enableRandomWrite = true, filterMode = FilterMode.Point };
+            oceanUpdateShader.SetTexture(_normalComputeKernelIndex,"normalMap",_normalTexture);
+            oceanUpdateShader.SetTexture(_normalComputeKernelIndex,"displacement",_displacementTexture);
             _frequentlyUpdatedBuffer = new ComputeBuffer(2, sizeof(int),ComputeBufferType.Constant);
             _frequentUpdateBufferId = Shader.PropertyToID("FrequentUpdatesVariables");
             _frequentUpdateData = new [] { 0, 0};
@@ -239,12 +249,21 @@ namespace Ocean
             _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
             //inversion and permutation pass
             oceanUpdateShader.Dispatch(_permutationKernelIndex, numberOfSamples / 16, numberOfSamples / 16, 1);
-            
+            oceanUpdateShader.Dispatch(_normalComputeKernelIndex, numberOfSamples/16,numberOfSamples/16,1);
+            if (_textureDump)
+            {
+                _textureDump = false;
+                var texture = new Texture2D(256, 256,TextureFormat.RGBAFloat,false);
+                RenderTexture.active = _normalTexture;
+                texture.ReadPixels(new Rect(0,0,256,256),0,0);
+                var pixelReadout = texture.GetPixels();
+                Debug.Log("stop");
+            }
         }
         
         private float _t;//initialized to 0
         private int _timeSpectrumKernel = 1;
-        
+        private int _normalComputeKernelIndex = 4;
 
         private void FourierComponents()
         {
