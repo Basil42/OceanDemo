@@ -2,8 +2,10 @@
 #pragma kernel ButterflyTextureGen
 #include <HLSLSupport.cginc>
 #define _NORMALMAP
+
 CBUFFER_START(RarelyUpdated)
 int N;//sample size
+int LogN;
 int L;//most likely the patch size
 //this buffer is currently shared with the OceanCompute shader, in which it contains more values
 CBUFFER_END

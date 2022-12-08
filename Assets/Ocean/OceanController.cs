@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Serialization;
+using UnityEngine.UI;
 
 namespace Ocean
 {
@@ -45,8 +46,13 @@ namespace Ocean
         private static readonly int HeightScalingMaterialID = Shader.PropertyToID("_HeightScaleFactor");
         private static readonly int HorizontalScalingMaterialID = Shader.PropertyToID("_HorizontalScaleDampening");
         
+        private float _t;//initialized to 0
+        private int _timeSpectrumKernel = 1;
+        private int _singlePassFFTKernel = 2;
+        private int _normalComputeKernelIndex = 4;
         //debug
         private bool _textureDump = true;
+        [SerializeField] private RawImage TextureDebugDisplay;
         #region Initialization
         
         
@@ -55,19 +61,20 @@ namespace Ocean
             if (numberOfSamples <= 0) numberOfSamples = 1;
             numberOfSamples = (int)RoundingToHigherPowerOfTwo(Convert.ToUInt32(numberOfSamples));//
             //check number of sample and pad to power of 2 if necessary
-            _constantParamBuffer = new ComputeBuffer(5, sizeof(int), ComputeBufferType.Constant);
-            oceanInitShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*5);
-            oceanUpdateShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*5);
+            _constantParamBuffer = new ComputeBuffer(6, sizeof(int), ComputeBufferType.Constant);
+            oceanInitShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*6);
+            oceanUpdateShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*6);
             var patchStep = GetComponent<MeshRenderer>().localBounds.size.x / numberOfSamples;
             Debug.Log(GetComponent<MeshRenderer>().localBounds.size.x);
             //int testInt = 1;
-            byte[] bufferData = new byte[20];
+            byte[] bufferData = new byte[24];
             BitConverter.GetBytes(numberOfSamples).CopyTo(bufferData,0);
-            BitConverter.GetBytes(patchSize).CopyTo(bufferData,4);
-            BitConverter.GetBytes(patchStep).CopyTo(bufferData,8);
+            BitConverter.GetBytes((int)Mathf.Log(numberOfSamples, 2)).CopyTo(bufferData,4);
+            BitConverter.GetBytes(patchSize).CopyTo(bufferData,8);
+            BitConverter.GetBytes(patchStep).CopyTo(bufferData,12);
             //scling factors
-            BitConverter.GetBytes(surfaceRenderer.material.GetFloat(HorizontalScalingMaterialID)).CopyTo(bufferData,12);
-            BitConverter.GetBytes(surfaceRenderer.material.GetFloat(HeightScalingMaterialID)).CopyTo(bufferData,16);
+            BitConverter.GetBytes(surfaceRenderer.material.GetFloat(HorizontalScalingMaterialID)).CopyTo(bufferData,16);
+            BitConverter.GetBytes(surfaceRenderer.material.GetFloat(HeightScalingMaterialID)).CopyTo(bufferData,20);
             
             
             _constantParamBuffer.SetData(bufferData);
@@ -85,9 +92,10 @@ namespace Ocean
             oceanUpdateShader.SetInt("direction",0);
             
             
-            var buffersSize = numberOfSamples * numberOfSamples;
+            var buffersSize = numberOfSamples * numberOfSamples * 2;
             
             _timeSpectrumKernel = oceanUpdateShader.FindKernel("TimeSpectrum");
+            
             oceanUpdateShader.SetTexture(_timeSpectrumKernel,"h0", _h0ValuesTexture);
 
             _fourierComponentBuffer = new ComputeBuffer(buffersSize, sizeof(float) * 6);
@@ -104,6 +112,10 @@ namespace Ocean
             oceanUpdateShader.SetTexture(_horizontalButterflyPassKernelIndex,"_butterflyTexture", _butterflyTexture);
             oceanUpdateShader.SetBuffer(_horizontalButterflyPassKernelIndex,"pingPong0",_fourierComponentBuffer);
             oceanUpdateShader.SetBuffer(_horizontalButterflyPassKernelIndex,"pingPong1",_pingPongBuffer);
+            
+            _singlePassFFTKernel = oceanUpdateShader.FindKernel("FFTCompute");
+            oceanUpdateShader.SetTexture(_singlePassFFTKernel,"_butterflyTexture",_butterflyTexture);
+            oceanUpdateShader.SetBuffer(_singlePassFFTKernel,"UnifiedFFTBuffer",_fourierComponentBuffer);
             
             _permutationKernelIndex = oceanUpdateShader.FindKernel("InversionAndPermutation");
             //Not convinced yet that the input buffer can't be predicted at build time, binding both ping pong buffer for now
@@ -244,7 +256,7 @@ namespace Ocean
                 oceanUpdateShader.Dispatch(_horizontalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
                 pingPong = pingPong == 1 ? 0 : 1;
             }
-
+            //oceanUpdateShader.Dispatch(_singlePassFFTKernel,numberOfSamples/16,numberOfSamples/16,1);
             _frequentUpdateData[1] = pingPong;
             _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
             //inversion and permutation pass
@@ -253,17 +265,13 @@ namespace Ocean
             if (_textureDump)
             {
                 _textureDump = false;
-                var texture = new Texture2D(256, 256,TextureFormat.RGBAFloat,false);
-                RenderTexture.active = _normalTexture;
-                texture.ReadPixels(new Rect(0,0,256,256),0,0);
-                var pixelReadout = texture.GetPixels();
+                Array dataDump = new float[numberOfSamples * numberOfSamples * 2 * 6];
+                _fourierComponentBuffer.GetData(dataDump);
                 Debug.Log("stop");
             }
         }
         
-        private float _t;//initialized to 0
-        private int _timeSpectrumKernel = 1;
-        private int _normalComputeKernelIndex = 4;
+        
 
         private void FourierComponents()
         {
@@ -271,7 +279,9 @@ namespace Ocean
             _t += Time.deltaTime;//might need to be looped back to 0
             oceanUpdateShader.SetFloat("t",_t);
             oceanUpdateShader.Dispatch(_timeSpectrumKernel,numberOfSamples/16,numberOfSamples/16,1);
-            
+            //Array fourierAmpReadout = new float[numberOfSamples * numberOfSamples * 6]; 
+            // _fourierComponentBuffer.GetData(fourierAmpReadout);
+            // Debug.Log("stop");
         }
         #endregion
 
