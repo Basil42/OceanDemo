@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 using UnityEngine.Serialization;
 using UnityEngine.UI;
@@ -51,8 +52,10 @@ namespace Ocean
         private int _singlePassFFTKernel = 2;
         private int _normalComputeKernelIndex = 4;
         //debug
+        #if UNITY_EDITOR || DEVELOPMENT_BUILD
         private bool _textureDump = true;
-        [SerializeField] private RawImage TextureDebugDisplay;
+        
+        #endif
         #region Initialization
         
         
@@ -84,6 +87,9 @@ namespace Ocean
             BindTimeDependentBuffers();
             surfaceRenderer.material.SetTexture(DisplacementTextureMaterialID,_displacementTexture,RenderTextureSubElement.Default);
             surfaceRenderer.material.SetTexture(NormalMapTextureMaterialID,_normalTexture,RenderTextureSubElement.Default);
+            #if UNITY_EDITOR || DEVELOPMENT_BUILD
+            DebugBidings();
+            #endif
         }
         private void BindTimeDependentBuffers()
         {
@@ -130,9 +136,9 @@ namespace Ocean
                 { enableRandomWrite = true, filterMode = FilterMode.Point };
             oceanUpdateShader.SetTexture(_normalComputeKernelIndex,"normalMap",_normalTexture);
             oceanUpdateShader.SetTexture(_normalComputeKernelIndex,"displacement",_displacementTexture);
-            _frequentlyUpdatedBuffer = new ComputeBuffer(2, sizeof(int),ComputeBufferType.Constant);
+            _frequentlyUpdatedBuffer = new ComputeBuffer(3, sizeof(int),ComputeBufferType.Constant);
             _frequentUpdateBufferId = Shader.PropertyToID("FrequentUpdatesVariables");
-            _frequentUpdateData = new [] { 0, 0};
+            _frequentUpdateData = new [] { 0, 0, 0};
             oceanUpdateShader.SetConstantBuffer(_frequentUpdateBufferId,_frequentlyUpdatedBuffer,0,sizeof(int)*4);//8 bytes ints of padding
         }
         private void ButterFlyTextureGeneration()
@@ -146,7 +152,7 @@ namespace Ocean
                 oceanInitShader.SetBuffer(kernel, "bitReversedBuffer", _bitReverseIndexes);
                 
                 //texture setup
-                var nlog2 = 0; //horizontal dimension of the texture
+                var nlog2 = 0; 
                 var n = numberOfSamples;
 
 
@@ -231,37 +237,50 @@ namespace Ocean
         }
         #endregion
 
-
         #region Runtime
         private void Update()
         {
             FourierComponents();
-            var pingPong = 0;//keeping these values outside the array is redundant, but is kept for clarity (ideally I'd prefer passing a struct to the buffer but unity doesn't allow it
             
-            for (int i = 0; i < Mathf.Log(numberOfSamples, 2); i++)
-            {
-                //Vertical butterfly pass
-                _frequentUpdateData[0] = i;
-                _frequentUpdateData[1] = pingPong;
-                _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
-                oceanUpdateShader.Dispatch(_verticalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
-                pingPong = pingPong == 1 ? 0 : 1;
-            }
-            for (int i = 0; i < (MathF.Log(numberOfSamples, 2)); i++)
-            {
-                //horizontal butterfly pass
-                _frequentUpdateData[0] = i;//pass
-                _frequentUpdateData[1] = pingPong;//buffer
-                _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
-                oceanUpdateShader.Dispatch(_horizontalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
-                pingPong = pingPong == 1 ? 0 : 1;
-            }
-            //oceanUpdateShader.Dispatch(_singlePassFFTKernel,numberOfSamples/16,numberOfSamples/16,1);
-            _frequentUpdateData[1] = pingPong;
-            _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
+            var pingPong = 0;//keeping these values outside the array is redundant, but is kept for clarity (ideally I'd prefer passing a struct to the buffer but unity doesn't allow it
+            _frequentUpdateData[0] = 0;//first direction
+            _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,3);
+            oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,numberOfSamples,1);
+            _frequentUpdateData[0] = 1;//second direction
+            _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,3);
+            oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,numberOfSamples,1);
+
+            // for (int i = 0; i < Mathf.Log(numberOfSamples, 2); i++)
+            // {
+            //     //Vertical butterfly pass
+            //     _frequentUpdateData[1] = i;
+            //     _frequentUpdateData[2] = pingPong;
+            //     _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
+            //     oceanUpdateShader.Dispatch(_verticalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
+            //     pingPong = pingPong == 1 ? 0 : 1;
+            // }
+            //
+            // for (int i = 0; i < (MathF.Log(numberOfSamples, 2)); i++)
+            // {
+            //     //horizontal butterfly pass
+            //     _frequentUpdateData[1] = i;//pass
+            //     _frequentUpdateData[2] = pingPong;//buffer
+            //     _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
+            //     oceanUpdateShader.Dispatch(_horizontalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
+            //     pingPong = pingPong == 1 ? 0 : 1;
+            // }
+
+            #if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if(amplitudeDebug)oceanUpdateShader.Dispatch(amplitudeDebugKernel,numberOfSamples,numberOfSamples*2,1);
+            #endif
+            
+
+            _frequentUpdateData[2] = pingPong;
+            _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,3);
             //inversion and permutation pass
             oceanUpdateShader.Dispatch(_permutationKernelIndex, numberOfSamples / 16, numberOfSamples / 16, 1);
             oceanUpdateShader.Dispatch(_normalComputeKernelIndex, numberOfSamples/16,numberOfSamples/16,1);
+            #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (_textureDump)
             {
                 _textureDump = false;
@@ -269,6 +288,7 @@ namespace Ocean
                 _fourierComponentBuffer.GetData(dataDump);
                 Debug.Log("stop");
             }
+            #endif
         }
         
         
@@ -279,9 +299,7 @@ namespace Ocean
             _t += Time.deltaTime;//might need to be looped back to 0
             oceanUpdateShader.SetFloat("t",_t);
             oceanUpdateShader.Dispatch(_timeSpectrumKernel,numberOfSamples/16,numberOfSamples/16,1);
-            //Array fourierAmpReadout = new float[numberOfSamples * numberOfSamples * 6]; 
-            // _fourierComponentBuffer.GetData(fourierAmpReadout);
-            // Debug.Log("stop");
+            
         }
         #endregion
 
@@ -295,8 +313,36 @@ namespace Ocean
             _pingPongBuffer.Release();
             _frequentlyUpdatedBuffer.Release();
             _constantParamBuffer.Release();
+            #if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if(TextureDebugAmplitudeTexture != null)TextureDebugAmplitudeTexture.Release();
+            #endif
             
         }
+        #endregion
+
+        #region textureDebug
+
+        [SerializeField] private bool amplitudeDebug = false;
+        [SerializeField] private RawImage TextureDebugAmplitudeDisplay;
+        private RenderTexture TextureDebugAmplitudeTexture;
+        private int amplitudeDebugKernel;
+        private void DebugBidings()
+        {
+            if (TextureDebugAmplitudeDisplay == null || amplitudeDebug == false)
+            {
+                Debug.Log("no display for the debug texture");
+                return;
+            }
+            TextureDebugAmplitudeTexture = new RenderTexture(numberOfSamples, numberOfSamples * 2, 0,
+                GraphicsFormat.R32G32B32A32_SFloat) {enableRandomWrite = true, filterMode = FilterMode.Point};
+            TextureDebugAmplitudeTexture.Create();
+            TextureDebugAmplitudeDisplay.texture = TextureDebugAmplitudeTexture;
+            amplitudeDebugKernel = oceanUpdateShader.FindKernel("DebugAmplitude");
+            oceanUpdateShader.SetBuffer(amplitudeDebugKernel,"tilde_hkt",_fourierComponentBuffer);
+            oceanUpdateShader.SetTexture(amplitudeDebugKernel,"DebugAmplitudeTexture",TextureDebugAmplitudeTexture);
+            oceanUpdateShader.SetTexture(_singlePassFFTKernel,"DebugFFTTexture",TextureDebugAmplitudeTexture);
+        }
+
         #endregion
     }
     

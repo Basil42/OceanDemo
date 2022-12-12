@@ -7,6 +7,7 @@
 #pragma kernel TimeSpectrum
 #pragma kernel InversionAndPermutation
 #pragma kernel FFTCompute
+#pragma kernel DebugAmplitude
 #ifdef _NORMALMAP
 #pragma kernel ComputeNormal
 #endif
@@ -20,6 +21,7 @@ RWStructuredBuffer<Complex3> pingPong1;
 #define M_PI 3.1415926535897932
 //got rid of the direction variable and simply calling the vertical and horizontal pass separately
 CBUFFER_START(FrequentUpdatesVariables)
+int direction;
 int stage;
 int pingPong;//this value is implicitly contained in stage and could be computed using stage & 1
 CBUFFER_END
@@ -35,43 +37,64 @@ float VerticalScaling;
 #endif
 CBUFFER_END
 RWStructuredBuffer<Complex3> UnifiedFFTBuffer;
-[numthreads(16,16,1)]
+RWTexture2D<float4> DebugFFTTexture;
+[numthreads(256,1,1)]
 void FFTCompute(uint3 id : SV_DispatchThreadID)
 {
-    //horiontalButterfly
-    Complex3 H;
-    int2 X = id.xy;
-    const uint Index = id.x + id.y*N;
+    int2 X = direction == 0 ? id.xy : id.yx;
+    uint Index = (X.x + X.y*N);//direction == 0 ? (id.x + id.y*N) : (id.y + id.x*N);
     const uint HalfBufferSize = N*N;
     bool WriteBackHalfOfBuffer = true;
+    AllMemoryBarrierWithGroupSync();
     //horizontal FFT
-    for(int HStage = 0; HStage < LogN; HStage++)//if defining N and LogN in a define and using multi compile, it is possible to unroll this loop, here the gain seems minor enough to ignore it
+    for(int Stage = 0; Stage < LogN; Stage++)//if defining N and LogN in a define and using multi compile, it is possible to unroll this loop, here the gain seems minor enough to ignore it
     {
-        const float4 ButterflyData = _butterflyTexture[int2(HStage,X.x)];
+        const float4 ButterflyData = _butterflyTexture[int2(Stage,id.x)];
         const float2 w = ButterflyData.xy;//twiddle
         const uint ReadOffset = (WriteBackHalfOfBuffer ? 0 : HalfBufferSize);
         const uint WriteOffset = (WriteBackHalfOfBuffer ? HalfBufferSize : 0);
-        const Complex3 p = UnifiedFFTBuffer[ButterflyData.z + N*X.y + ReadOffset];
-        const Complex3 q = UnifiedFFTBuffer[ButterflyData.w + N*X.y + ReadOffset];
-        H = cmp_add(p,cmp_multiply(w,q));
+        Complex3 p;
+        Complex3 q;
+        if(direction == 0)//uniform branch, acceptable
+        {
+            p = UnifiedFFTBuffer[ButterflyData.z + N*X.y + ReadOffset];
+            q = UnifiedFFTBuffer[ButterflyData.w + N*X.y + ReadOffset];
+        }else
+        {
+            p = UnifiedFFTBuffer[X.x + N*ButterflyData.z + ReadOffset];
+            q = UnifiedFFTBuffer[X.x + N*ButterflyData.w + ReadOffset];
+        }
+        
+        const Complex3 H = cmp_add(p, cmp_multiply(w, q));
         UnifiedFFTBuffer[Index + WriteOffset] = H;
+        
         WriteBackHalfOfBuffer = !WriteBackHalfOfBuffer;
-        DeviceMemoryBarrierWithGroupSync();//this buffer is probably considered device memory as the butterfly texture makes it difficult to clump reads by group
+        AllMemoryBarrierWithGroupSync();//this buffer is probably considered device memory 
+        
     }
-    //Vertical FFT
-    for(int VStage = 0; VStage < LogN; VStage++)
-    {
-        const float4 ButterflyData = _butterflyTexture[int2(VStage,X.y)];
-        const float2 w = ButterflyData.xy;
-        const uint ReadOffset = (WriteBackHalfOfBuffer ? 0 : HalfBufferSize);
-        const uint WriteOffset = (WriteBackHalfOfBuffer ? HalfBufferSize : 0);
-        const Complex3 p = UnifiedFFTBuffer[X.x + N*ButterflyData.z + ReadOffset];
-        const Complex3 q = UnifiedFFTBuffer[X.x + N*ButterflyData.w + ReadOffset];
-        H = cmp_add(p,cmp_multiply(w,q));
-        UnifiedFFTBuffer[Index + WriteOffset] = H;
-        WriteBackHalfOfBuffer = !WriteBackHalfOfBuffer;
-        DeviceMemoryBarrierWithGroupSync();
-    }
+     
+     //Vertical FFT
+    //  for(int VStage = 0; VStage < LogN; VStage++)
+    //  {
+    //      AllMemoryBarrierWithGroupSync();
+    //      const float4 ButterflyData = _butterflyTexture[int2(VStage,X.y)];
+    //      const float2 w = ButterflyData.xy;
+    //      const uint ReadOffset = (WriteBackHalfOfBuffer ? 0 : HalfBufferSize);
+    //      const uint WriteOffset = (WriteBackHalfOfBuffer ? HalfBufferSize : 0);
+    //      const Complex3 p = UnifiedFFTBuffer[X.x + N*ButterflyData.z + ReadOffset];
+    //      const Complex3 q = UnifiedFFTBuffer[X.x + N*ButterflyData.w + ReadOffset];
+    //      H = cmp_add(p,cmp_multiply(w,q));
+    //      UnifiedFFTBuffer[Index + WriteOffset] = H;
+    //      if(textureWrite)
+    //      {
+    //          float2 debugIndex = float2(id.x,id.y + (WriteBackHalfOfBuffer ? N : 0));
+    //          DebugFFTTexture[debugIndex.xy] = float4(H.dy,0,1);
+    //          DebugFFTTexture[id.xy] = float4(UnifiedFFTBuffer[id.x + N*id.y].dy,0,1);
+    //          textureWrite = false;
+    //      }
+    //      WriteBackHalfOfBuffer = !WriteBackHalfOfBuffer;
+    //      AllMemoryBarrierWithGroupSync();
+    // }
 }
 
 [numthreads(16,16,1)]
@@ -229,5 +252,10 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
         tilde_hkt[id.x + id.y*N] = AmplitudeResult;
     
     }
-    
+    RWTexture2D<float4> DebugAmplitudeTexture;
+    [numthreads(16,16,1)]
+    void DebugAmplitude(uint3 id : SV_dispatchThreadID)
+    {
+        DebugAmplitudeTexture[id.xy] = float4(tilde_hkt[id.x + id.y*N].dy,0,1);
+    }
 

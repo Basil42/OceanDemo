@@ -46,7 +46,7 @@ Material:
     - NormalFiltering: 1
     - NormalVis: 0
     - TangentVis: 0
-    - _HeightScaleFactor: 10.1
+    - _HeightScaleFactor: 5.7
     - _HorizontalScaleDampening: 0.235
     - _MaxTessDistance: 64
     - _Opacity: 0.825
