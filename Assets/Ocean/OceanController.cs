@@ -38,8 +38,6 @@ namespace Ocean
         private ComputeBuffer _constantParamBuffer;
         private int _frequentUpdateBufferId;
         private int[] _frequentUpdateData;
-        private int _horizontalButterflyPassKernelIndex;
-        private int _verticalButterflyPassKernelIndex;
         private int _permutationKernelIndex;
 
         private static readonly int DisplacementTextureMaterialID = Shader.PropertyToID("_DisplacementTex");
@@ -51,11 +49,7 @@ namespace Ocean
         private int _timeSpectrumKernel = 1;
         private int _singlePassFFTKernel = 2;
         private int _normalComputeKernelIndex = 4;
-        //debug
-        #if UNITY_EDITOR || DEVELOPMENT_BUILD
-        private bool _textureDump = true;
         
-        #endif
         #region Initialization
         
         
@@ -68,8 +62,6 @@ namespace Ocean
             oceanInitShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*6);
             oceanUpdateShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*6);
             var patchStep = GetComponent<MeshRenderer>().localBounds.size.x / numberOfSamples;
-            Debug.Log(GetComponent<MeshRenderer>().localBounds.size.x);
-            //int testInt = 1;
             byte[] bufferData = new byte[24];
             BitConverter.GetBytes(numberOfSamples).CopyTo(bufferData,0);
             BitConverter.GetBytes((int)Mathf.Log(numberOfSamples, 2)).CopyTo(bufferData,4);
@@ -108,20 +100,10 @@ namespace Ocean
             oceanUpdateShader.SetBuffer(_timeSpectrumKernel,"tilde_hkt",_fourierComponentBuffer);
 
             _pingPongBuffer = new ComputeBuffer(buffersSize, sizeof(float) * 6);
-            
-            _verticalButterflyPassKernelIndex = oceanUpdateShader.FindKernel("ButterflyVerticalCompute");
-            oceanUpdateShader.SetTexture(_verticalButterflyPassKernelIndex,"_butterflyTexture", _butterflyTexture);
-            oceanUpdateShader.SetBuffer(_verticalButterflyPassKernelIndex,"pingPong0",_fourierComponentBuffer);
-            oceanUpdateShader.SetBuffer(_verticalButterflyPassKernelIndex,"pingPong1",_pingPongBuffer);
-            
-            _horizontalButterflyPassKernelIndex = oceanUpdateShader.FindKernel("ButterflyHorizontalCompute");
-            oceanUpdateShader.SetTexture(_horizontalButterflyPassKernelIndex,"_butterflyTexture", _butterflyTexture);
-            oceanUpdateShader.SetBuffer(_horizontalButterflyPassKernelIndex,"pingPong0",_fourierComponentBuffer);
-            oceanUpdateShader.SetBuffer(_horizontalButterflyPassKernelIndex,"pingPong1",_pingPongBuffer);
-            
+
             _singlePassFFTKernel = oceanUpdateShader.FindKernel("FFTCompute");
             oceanUpdateShader.SetTexture(_singlePassFFTKernel,"_butterflyTexture",_butterflyTexture);
-            oceanUpdateShader.SetBuffer(_singlePassFFTKernel,"UnifiedFFTBuffer",_fourierComponentBuffer);
+            oceanUpdateShader.SetBuffer(_singlePassFFTKernel,"InOutFFTBuffer",_fourierComponentBuffer);
             
             _permutationKernelIndex = oceanUpdateShader.FindKernel("InversionAndPermutation");
             //Not convinced yet that the input buffer can't be predicted at build time, binding both ping pong buffer for now
@@ -249,26 +231,7 @@ namespace Ocean
             _frequentUpdateData[0] = 1;//second direction
             _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,3);
             oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,numberOfSamples,1);
-
-            // for (int i = 0; i < Mathf.Log(numberOfSamples, 2); i++)
-            // {
-            //     //Vertical butterfly pass
-            //     _frequentUpdateData[1] = i;
-            //     _frequentUpdateData[2] = pingPong;
-            //     _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
-            //     oceanUpdateShader.Dispatch(_verticalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
-            //     pingPong = pingPong == 1 ? 0 : 1;
-            // }
-            //
-            // for (int i = 0; i < (MathF.Log(numberOfSamples, 2)); i++)
-            // {
-            //     //horizontal butterfly pass
-            //     _frequentUpdateData[1] = i;//pass
-            //     _frequentUpdateData[2] = pingPong;//buffer
-            //     _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,2);
-            //     oceanUpdateShader.Dispatch(_horizontalButterflyPassKernelIndex,numberOfSamples/16,numberOfSamples/16,1);
-            //     pingPong = pingPong == 1 ? 0 : 1;
-            // }
+            
 
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if(amplitudeDebug)oceanUpdateShader.Dispatch(amplitudeDebugKernel,numberOfSamples,numberOfSamples*2,1);
@@ -280,15 +243,6 @@ namespace Ocean
             //inversion and permutation pass
             oceanUpdateShader.Dispatch(_permutationKernelIndex, numberOfSamples / 16, numberOfSamples / 16, 1);
             oceanUpdateShader.Dispatch(_normalComputeKernelIndex, numberOfSamples/16,numberOfSamples/16,1);
-            #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if (_textureDump)
-            {
-                _textureDump = false;
-                Array dataDump = new float[numberOfSamples * numberOfSamples * 2 * 6];
-                _fourierComponentBuffer.GetData(dataDump);
-                Debug.Log("stop");
-            }
-            #endif
         }
         
         
@@ -322,7 +276,7 @@ namespace Ocean
 
         #region textureDebug
 
-        [SerializeField] private bool amplitudeDebug = false;
+        [SerializeField] private bool amplitudeDebug;
         [SerializeField] private RawImage TextureDebugAmplitudeDisplay;
         private RenderTexture TextureDebugAmplitudeTexture;
         private int amplitudeDebugKernel;

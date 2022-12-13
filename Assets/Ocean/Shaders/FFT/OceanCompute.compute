@@ -1,9 +1,6 @@
 #include <HLSLSupport.cginc>
 #include "ComplexOperators.compute"
 #define _NORMALMAP
-#pragma shader_feature PREVIS
-#pragma kernel ButterflyHorizontalCompute
-#pragma kernel ButterflyVerticalCompute
 #pragma kernel TimeSpectrum
 #pragma kernel InversionAndPermutation
 #pragma kernel FFTCompute
@@ -22,8 +19,6 @@ RWStructuredBuffer<Complex3> pingPong1;
 //got rid of the direction variable and simply calling the vertical and horizontal pass separately
 CBUFFER_START(FrequentUpdatesVariables)
 int direction;
-int stage;
-int pingPong;//this value is implicitly contained in stage and could be computed using stage & 1
 CBUFFER_END
 
 CBUFFER_START(RarelyUpdated)
@@ -36,7 +31,7 @@ float HorizontalScaling;
 float VerticalScaling;
 #endif
 CBUFFER_END
-RWStructuredBuffer<Complex3> UnifiedFFTBuffer;
+RWStructuredBuffer<Complex3> InOutFFTBuffer;//Size*size buffer taking the time dependent spectrum as input and outputting displacements (said displacement still need to be permuted and inverted)
 RWTexture2D<float4> DebugFFTTexture;
 [numthreads(256,1,1)]
 void FFTCompute(uint3 id : SV_DispatchThreadID)
@@ -57,99 +52,25 @@ void FFTCompute(uint3 id : SV_DispatchThreadID)
         Complex3 q;
         if(direction == 0)//uniform branch, acceptable
         {
-            p = UnifiedFFTBuffer[ButterflyData.z + N*X.y + ReadOffset];
-            q = UnifiedFFTBuffer[ButterflyData.w + N*X.y + ReadOffset];
+            p = InOutFFTBuffer[ButterflyData.z + N*X.y + ReadOffset];
+            q = InOutFFTBuffer[ButterflyData.w + N*X.y + ReadOffset];
         }else
         {
-            p = UnifiedFFTBuffer[X.x + N*ButterflyData.z + ReadOffset];
-            q = UnifiedFFTBuffer[X.x + N*ButterflyData.w + ReadOffset];
+            p = InOutFFTBuffer[X.x + N*ButterflyData.z + ReadOffset];
+            q = InOutFFTBuffer[X.x + N*ButterflyData.w + ReadOffset];
         }
         
         const Complex3 H = cmp_add(p, cmp_multiply(w, q));
-        UnifiedFFTBuffer[Index + WriteOffset] = H;
+        InOutFFTBuffer[Index + WriteOffset] = H;
         
         WriteBackHalfOfBuffer = !WriteBackHalfOfBuffer;
         AllMemoryBarrierWithGroupSync();//this buffer is probably considered device memory 
         
     }
      
-     //Vertical FFT
-    //  for(int VStage = 0; VStage < LogN; VStage++)
-    //  {
-    //      AllMemoryBarrierWithGroupSync();
-    //      const float4 ButterflyData = _butterflyTexture[int2(VStage,X.y)];
-    //      const float2 w = ButterflyData.xy;
-    //      const uint ReadOffset = (WriteBackHalfOfBuffer ? 0 : HalfBufferSize);
-    //      const uint WriteOffset = (WriteBackHalfOfBuffer ? HalfBufferSize : 0);
-    //      const Complex3 p = UnifiedFFTBuffer[X.x + N*ButterflyData.z + ReadOffset];
-    //      const Complex3 q = UnifiedFFTBuffer[X.x + N*ButterflyData.w + ReadOffset];
-    //      H = cmp_add(p,cmp_multiply(w,q));
-    //      UnifiedFFTBuffer[Index + WriteOffset] = H;
-    //      if(textureWrite)
-    //      {
-    //          float2 debugIndex = float2(id.x,id.y + (WriteBackHalfOfBuffer ? N : 0));
-    //          DebugFFTTexture[debugIndex.xy] = float4(H.dy,0,1);
-    //          DebugFFTTexture[id.xy] = float4(UnifiedFFTBuffer[id.x + N*id.y].dy,0,1);
-    //          textureWrite = false;
-    //      }
-    //      WriteBackHalfOfBuffer = !WriteBackHalfOfBuffer;
-    //      AllMemoryBarrierWithGroupSync();
-    // }
+     
 }
 
-[numthreads(16,16,1)]
-void ButterflyHorizontalCompute(uint3 id : SV_DispatchThreadID)
-{
-    Complex3 H;//H and most the float2 in this kernel are complex numbers, but encapsulating them in struct here is unpractical
-    int2 X = id.xy;
-    const uint BufferIndex = id.x + id.y*N;
-    const float4 ButterFlyData = _butterflyTexture[int2(stage,X.x)];//moved out of the branch
-    const float2 w = ButterFlyData.xy;
-    if(pingPong == 0)//this branch isn't dynamic so it should be fine
-    {
-        const Complex3 p = pingPong0[ButterFlyData.z + N*X.y];
-        const Complex3 q = pingPong0[ButterFlyData.w + N*X.y];
-        
-        H = cmp_add(p,cmp_multiply(w,q));
-        pingPong1[BufferIndex] = H;
-        
-    }else//having an additional check here seems pointless
-    {
-        const Complex3 p = pingPong1[ButterFlyData.z + N*X.y];
-        const Complex3 q = pingPong1[ButterFlyData.w + N*X.y];
-        H = cmp_add(p,cmp_multiply(w,q));
-        pingPong0[BufferIndex] = H;
-        
-    }
-}
-
-[numthreads(16,16,1)]
-void ButterflyVerticalCompute(uint3 id : SV_DispatchThreadID)//TODO: the whole fft can be processed in a single call with GroupMemoryBarrierWithGroupSync()
-{
-    Complex3 H;
-    int2 X = id.xy;
-    const uint BufferIndex = id.x + id.y*N;
-    const float4 data = _butterflyTexture[int2(stage,X.y)];
-    const float2 w = data.xy;//just for clarity (although at this point...)
-    if(pingPong == 0)
-    {
-        const Complex3 p = pingPong0[X.x + N*data.z];
-        const Complex3 q = pingPong0[X.x + N*data.w];
-
-        H = cmp_add(p, cmp_multiply(w,q));
-        pingPong1[BufferIndex] = H;
-       
-
-    }else
-    {
-        const Complex3 p = pingPong1[X.x + N*data.z];
-        const Complex3 q = pingPong1[X.x + N*data.w];
-
-        H = cmp_add(p, cmp_multiply(w,q));
-        pingPong0[BufferIndex] = H;
-        
-    }
-}
 RWTexture2D<float4> displacement;
 #ifdef _NORMALMAP
 RWTexture2D<float4> normalMap;
