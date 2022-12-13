@@ -17,9 +17,8 @@ RWStructuredBuffer<Complex3> pingPong1;
 
 #define M_PI 3.1415926535897932
 //got rid of the direction variable and simply calling the vertical and horizontal pass separately
-CBUFFER_START(FrequentUpdatesVariables)
 int direction;
-CBUFFER_END
+
 
 CBUFFER_START(RarelyUpdated)
 int N;

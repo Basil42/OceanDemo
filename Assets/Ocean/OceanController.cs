@@ -34,10 +34,8 @@ namespace Ocean
         private ComputeBuffer _bitReverseIndexes;
         
         //constant buffers
-        private ComputeBuffer _frequentlyUpdatedBuffer;
         private ComputeBuffer _constantParamBuffer;
         private int _frequentUpdateBufferId;
-        private int[] _frequentUpdateData;
         private int _permutationKernelIndex;
 
         private static readonly int DisplacementTextureMaterialID = Shader.PropertyToID("_DisplacementTex");
@@ -118,10 +116,7 @@ namespace Ocean
                 { enableRandomWrite = true, filterMode = FilterMode.Point };
             oceanUpdateShader.SetTexture(_normalComputeKernelIndex,"normalMap",_normalTexture);
             oceanUpdateShader.SetTexture(_normalComputeKernelIndex,"displacement",_displacementTexture);
-            _frequentlyUpdatedBuffer = new ComputeBuffer(3, sizeof(int),ComputeBufferType.Constant);
-            _frequentUpdateBufferId = Shader.PropertyToID("FrequentUpdatesVariables");
-            _frequentUpdateData = new [] { 0, 0, 0};
-            oceanUpdateShader.SetConstantBuffer(_frequentUpdateBufferId,_frequentlyUpdatedBuffer,0,sizeof(int)*4);//8 bytes ints of padding
+           
         }
         private void ButterFlyTextureGeneration()
         {
@@ -224,12 +219,9 @@ namespace Ocean
         {
             FourierComponents();
             
-            var pingPong = 0;//keeping these values outside the array is redundant, but is kept for clarity (ideally I'd prefer passing a struct to the buffer but unity doesn't allow it
-            _frequentUpdateData[0] = 0;//first direction
-            _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,3);
+            oceanUpdateShader.SetInt("direction",0);
             oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,numberOfSamples,1);
-            _frequentUpdateData[0] = 1;//second direction
-            _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,3);
+            oceanUpdateShader.SetInt("direction",1);
             oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,numberOfSamples,1);
             
 
@@ -238,8 +230,7 @@ namespace Ocean
             #endif
             
 
-            _frequentUpdateData[2] = pingPong;
-            _frequentlyUpdatedBuffer.SetData(_frequentUpdateData,0,0,3);
+          
             //inversion and permutation pass
             oceanUpdateShader.Dispatch(_permutationKernelIndex, numberOfSamples / 16, numberOfSamples / 16, 1);
             oceanUpdateShader.Dispatch(_normalComputeKernelIndex, numberOfSamples/16,numberOfSamples/16,1);
@@ -265,7 +256,6 @@ namespace Ocean
             _fourierComponentBuffer.Release();
             _bitReverseIndexes.Release();//this could be released earlier
             _pingPongBuffer.Release();
-            _frequentlyUpdatedBuffer.Release();
             _constantParamBuffer.Release();
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if(TextureDebugAmplitudeTexture != null)TextureDebugAmplitudeTexture.Release();
