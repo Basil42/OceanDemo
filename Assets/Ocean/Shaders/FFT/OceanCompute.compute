@@ -11,9 +11,6 @@
 
 Texture2D<float4> h0;
 Texture2D<float4> _butterflyTexture;
-//Apparently, you can pack these in "texture buffers" that have the same access optimization than textures
-RWStructuredBuffer<Complex3> pingPong0;
-RWStructuredBuffer<Complex3> pingPong1;
 
 #define M_PI 3.1415926535897932
 //got rid of the direction variable and simply calling the vertical and horizontal pass separately
@@ -31,7 +28,6 @@ float VerticalScaling;
 #endif
 CBUFFER_END
 RWStructuredBuffer<Complex3> InOutFFTBuffer;//Size*size buffer taking the time dependent spectrum as input and outputting displacements (said displacement still need to be permuted and inverted)
-RWTexture2D<float4> DebugFFTTexture;
 [numthreads(256,1,1)]
 void FFTCompute(uint3 id : SV_DispatchThreadID)
 {
@@ -128,8 +124,8 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
     const float perm = (int(X.x + X.y) & 1) ? -1.0f : 1.0f;//true if x+y is odd
     
     
-    Complex3 pingPongData = pingPong0[BufferIndex];//guaranteed to be the correct buffer as there are two passes of equal length
-    const float3 h = float3(pingPongData.dx.x,pingPongData.dy.x,pingPongData.dz.x);//taking the real part of all components
+    Complex3 Data = InOutFFTBuffer[BufferIndex];//guaranteed to be the correct half of the buffer as there are two passes of equal length
+    const float3 h = float3(Data.dx.x,Data.dy.x,Data.dz.x);//taking the real part of all components
     displacement[X] = float4(perm*(h/float(N*N)),1);
 }
     float t;//this needs to be "tiled" somehow to not raise forever (and break)
@@ -176,6 +172,6 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
     [numthreads(16,16,1)]
     void DebugAmplitude(uint3 id : SV_dispatchThreadID)
     {
-        DebugAmplitudeTexture[id.xy] = float4(tilde_hkt[id.x + id.y*N].dy,0,1);
+        DebugAmplitudeTexture[id.xy] = float4(tilde_hkt[id.x + id.y*N].dy.x,0,0,1);
     }
 

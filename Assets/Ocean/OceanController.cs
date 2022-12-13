@@ -105,8 +105,7 @@ namespace Ocean
             
             _permutationKernelIndex = oceanUpdateShader.FindKernel("InversionAndPermutation");
             //Not convinced yet that the input buffer can't be predicted at build time, binding both ping pong buffer for now
-            oceanUpdateShader.SetBuffer(_permutationKernelIndex,"pingPong0",_fourierComponentBuffer);
-            oceanUpdateShader.SetBuffer(_permutationKernelIndex,"pingPong1",_pingPongBuffer);
+            oceanUpdateShader.SetBuffer(_permutationKernelIndex,"InOutFFTBuffer",_fourierComponentBuffer);
             //textures
             _displacementTexture =
                 new RenderTexture(numberOfSamples, numberOfSamples, 0,RenderTextureFormat.ARGBFloat) {enableRandomWrite = true, filterMode = FilterMode.Point};//Default format, wasting the alpha channel but R32G32B32 isn't supported everywhere
@@ -226,7 +225,7 @@ namespace Ocean
             
 
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if(amplitudeDebug)oceanUpdateShader.Dispatch(amplitudeDebugKernel,numberOfSamples,numberOfSamples*2,1);
+            if(amplitudeDebug)oceanUpdateShader.Dispatch(_amplitudeDebugKernel,numberOfSamples,numberOfSamples*2,1);
             #endif
             
 
@@ -258,7 +257,7 @@ namespace Ocean
             _pingPongBuffer.Release();
             _constantParamBuffer.Release();
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if(TextureDebugAmplitudeTexture != null)TextureDebugAmplitudeTexture.Release();
+            if(_textureDebugAmplitudeTexture != null)_textureDebugAmplitudeTexture.Release();
             #endif
             
         }
@@ -267,24 +266,23 @@ namespace Ocean
         #region textureDebug
 
         [SerializeField] private bool amplitudeDebug;
-        [SerializeField] private RawImage TextureDebugAmplitudeDisplay;
-        private RenderTexture TextureDebugAmplitudeTexture;
-        private int amplitudeDebugKernel;
+        [FormerlySerializedAs("TextureDebugAmplitudeDisplay")] [SerializeField] private RawImage textureDebugAmplitudeDisplay;
+        private RenderTexture _textureDebugAmplitudeTexture;
+        private int _amplitudeDebugKernel;
         private void DebugBidings()
         {
-            if (TextureDebugAmplitudeDisplay == null || amplitudeDebug == false)
+            if (textureDebugAmplitudeDisplay == null || amplitudeDebug == false)
             {
                 Debug.Log("no display for the debug texture");
                 return;
             }
-            TextureDebugAmplitudeTexture = new RenderTexture(numberOfSamples, numberOfSamples * 2, 0,
+            _textureDebugAmplitudeTexture = new RenderTexture(numberOfSamples, numberOfSamples * 2, 0,
                 GraphicsFormat.R32G32B32A32_SFloat) {enableRandomWrite = true, filterMode = FilterMode.Point};
-            TextureDebugAmplitudeTexture.Create();
-            TextureDebugAmplitudeDisplay.texture = TextureDebugAmplitudeTexture;
-            amplitudeDebugKernel = oceanUpdateShader.FindKernel("DebugAmplitude");
-            oceanUpdateShader.SetBuffer(amplitudeDebugKernel,"tilde_hkt",_fourierComponentBuffer);
-            oceanUpdateShader.SetTexture(amplitudeDebugKernel,"DebugAmplitudeTexture",TextureDebugAmplitudeTexture);
-            oceanUpdateShader.SetTexture(_singlePassFFTKernel,"DebugFFTTexture",TextureDebugAmplitudeTexture);
+            _textureDebugAmplitudeTexture.Create();
+            textureDebugAmplitudeDisplay.texture = _textureDebugAmplitudeTexture;
+            _amplitudeDebugKernel = oceanUpdateShader.FindKernel("DebugAmplitude");
+            oceanUpdateShader.SetBuffer(_amplitudeDebugKernel,"tilde_hkt",_fourierComponentBuffer);
+            oceanUpdateShader.SetTexture(_amplitudeDebugKernel,"DebugAmplitudeTexture",_textureDebugAmplitudeTexture);
         }
 
         #endregion
