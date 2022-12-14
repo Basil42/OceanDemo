@@ -9,8 +9,27 @@
 #pragma kernel ComputeNormal
 #endif
 
+#pragma multi_compile_local SAMPLE_64 SAMPLE_128 SAMPLE_256 SAMPLE_512 SAMPLE_1024
+
+#if defined(SAMPLE_1024)
+#define SAMPLESIZE 1024
+#define LOGSAMPLESIZE 10
+#elif defined(SAMPLE_512)
+#define SAMPLESIZE 512
+#define LOGSAMPLESIZE 9
+#elif defined(SAMPLE_256)
+#define SAMPLESIZE 256
+#define LOGSAMPLESIZE 8
+#elif defined(SAMPLE_128)
+#define SAMPLESIZE 128
+#define LOGSAMPLESIZE 7
+#else
+#define SAMPLESIZE 64
+#define LOGSAMPLESIZE 6
+#endif
+
 Texture2D<float4> h0;
-Texture2D<float4> _butterflyTexture;
+Texture2D<float4> _butterflyTexture;//There might be a way to just compute this data in the ftt pass
 
 #define M_PI 3.1415926535897932
 //got rid of the direction variable and simply calling the vertical and horizontal pass separately
@@ -28,16 +47,16 @@ float VerticalScaling;
 #endif
 CBUFFER_END
 RWStructuredBuffer<Complex3> InOutFFTBuffer;//Size*size buffer taking the time dependent spectrum as input and outputting displacements (said displacement still need to be permuted and inverted)
-[numthreads(256,1,1)]
-void FFTCompute(uint3 id : SV_DispatchThreadID)
+//TODO add a groupshared [2][N] sized buffer to cut down on buffer access, it requires significantly refactoring the butterfly texture
+//TODO extract the fft computation to reuse it in different kernels (like normals)
+void FFTOperation(int2 id)
 {
     int2 X = direction == 0 ? id.xy : id.yx;
-    uint Index = (X.x + X.y*N);//direction == 0 ? (id.x + id.y*N) : (id.y + id.x*N);
-    const uint HalfBufferSize = N*N;
+    const uint Index = (X.x + X.y*SAMPLESIZE);//direction == 0 ? (id.x + id.y*N) : (id.y + id.x*N);
+    const uint HalfBufferSize = SAMPLESIZE*SAMPLESIZE;
     bool WriteBackHalfOfBuffer = true;
-    AllMemoryBarrierWithGroupSync();
-    //horizontal FFT
-    for(int Stage = 0; Stage < LogN; Stage++)//if defining N and LogN in a define and using multi compile, it is possible to unroll this loop, here the gain seems minor enough to ignore it
+    DeviceMemoryBarrierWithGroupSync();
+    for(int Stage = 0; Stage < LOGSAMPLESIZE; Stage++)//if defining N and LogN in a define and using multi compile, it is possible to unroll this loop, here the gain seems minor enough to ignore it
     {
         const float4 ButterflyData = _butterflyTexture[int2(Stage,id.x)];
         const float2 w = ButterflyData.xy;//twiddle
@@ -46,25 +65,28 @@ void FFTCompute(uint3 id : SV_DispatchThreadID)
         Complex3 p;
         Complex3 q;
         if(direction == 0)//uniform branch, acceptable
-        {
-            p = InOutFFTBuffer[ButterflyData.z + N*X.y + ReadOffset];
-            q = InOutFFTBuffer[ButterflyData.w + N*X.y + ReadOffset];
-        }else
-        {
-            p = InOutFFTBuffer[X.x + N*ButterflyData.z + ReadOffset];
-            q = InOutFFTBuffer[X.x + N*ButterflyData.w + ReadOffset];
-        }
+            {
+                p = InOutFFTBuffer[ButterflyData.z + SAMPLESIZE*X.y + ReadOffset];
+                q = InOutFFTBuffer[ButterflyData.w + SAMPLESIZE*X.y + ReadOffset];
+            }else
+            {
+                p = InOutFFTBuffer[X.x + SAMPLESIZE*ButterflyData.z + ReadOffset];
+                q = InOutFFTBuffer[X.x + SAMPLESIZE*ButterflyData.w + ReadOffset];
+            }
         
         const Complex3 H = cmp_add(p, cmp_multiply(w, q));
         InOutFFTBuffer[Index + WriteOffset] = H;
         
         WriteBackHalfOfBuffer = !WriteBackHalfOfBuffer;
-        AllMemoryBarrierWithGroupSync();//this buffer is probably considered device memory 
-        
+        DeviceMemoryBarrierWithGroupSync();//this buffer is probably considered device memory
     }
-     
-     
 }
+[numthreads(SAMPLESIZE,1,1)]
+void FFTCompute(uint3 id : SV_DispatchThreadID)
+{
+    FFTOperation(id.xy);
+}
+
 
 RWTexture2D<float4> displacement;
 #ifdef _NORMALMAP
@@ -119,14 +141,14 @@ void ComputeNormal(uint3 id : SV_DispatchThreadID)//working on 2x2 pixel quads, 
 void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
 {
     const int2 X = id.xy;
-    const uint BufferIndex = id.x + id.y*N;
+    const uint BufferIndex = id.x + id.y*SAMPLESIZE;
     
     const float perm = (int(X.x + X.y) & 1) ? -1.0f : 1.0f;//true if x+y is odd
     
     
     Complex3 Data = InOutFFTBuffer[BufferIndex];//guaranteed to be the correct half of the buffer as there are two passes of equal length
     const float3 h = float3(Data.dx.x,Data.dy.x,Data.dz.x);//taking the real part of all components
-    displacement[X] = float4(perm*(h/float(N*N)),1);
+    displacement[X] = float4(perm*(h/float(SAMPLESIZE*SAMPLESIZE)),1);
 }
     float t;//this needs to be "tiled" somehow to not raise forever (and break)
     RWStructuredBuffer<Complex3> tilde_hkt;//a texture buffer might lay this out in memory like a texture
@@ -134,13 +156,13 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
     [numthreads(16,16,1)]
     void TimeSpectrum(uint3 id: SV_dispatchThreadID)
     {
-        float2 X = float2(id.xy) - (float(N)/2.0);
+        float2 X = float2(id.xy) - (float(SAMPLESIZE)/2.0);
         float2 K = float2(2.0* M_PI * X.x/L, 2.0 * M_PI * X.y/L);
 
         float mag = length(K);
         if(mag < 0.00001) mag = 0.00001;
 
-        const float w = sqrt(9.81 * mag);//from sq(w) = g*K used to suppress perpendicular waves
+        const float w = sqrt(9.81 * mag);//dispertion relation that controls wave size per frequency
         
         //leaving this commented to show the intent
         // const float2 fourier_amplitude = h0_k[id.xy];
@@ -165,13 +187,13 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
         const float2 h_kt_dz = cmp_multiply(dz, h_kt_dy);
         //const float2 h_kt_dzx = -(h_kt_dy * K.x * K.y * (1/mag));//not very rigorous but it might be correct in this case
         const Complex3 AmplitudeResult = { h_kt_dx, h_kt_dy, h_kt_dz};
-        tilde_hkt[id.x + id.y*N] = AmplitudeResult;
+        tilde_hkt[id.x + id.y*SAMPLESIZE] = AmplitudeResult;
     
     }
     RWTexture2D<float4> DebugAmplitudeTexture;
     [numthreads(16,16,1)]
     void DebugAmplitude(uint3 id : SV_dispatchThreadID)
     {
-        DebugAmplitudeTexture[id.xy] = float4(tilde_hkt[id.x + id.y*N].dy.x,0,0,1);
+        DebugAmplitudeTexture[id.xy] = float4(tilde_hkt[id.x + id.y*SAMPLESIZE].dy.y,0,0,1);
     }
 

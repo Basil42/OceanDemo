@@ -19,7 +19,7 @@ RWTexture2D<float4> h0;
 Texture2D<float4> noise;
 SamplerState pointClampSampler;
 #define M_PI 3.1415926535897932
-#define kwExponent 8.0
+#define kwExponent 2.0
 
 float4 gaussRND(uint3 id)
 {
@@ -40,25 +40,24 @@ void SpectrumGen(uint3 id : SV_DispatchThreadID)
 {
     const float2 X = float2(id.xy) - float(N)/2.0f;
     const float2 K = float2(2.0*M_PI * X.x/L, 2.0*M_PI*X.y/L);
-    const float L_ = (windSpeed * windSpeed)/g;//this could be "l", but it is not clearly defined in the paper
+    const float HMax = (windSpeed * windSpeed)/g;//little clash of symbols between the two papers here defined as L in the Tessendorf paper
     float mag = length(K);
     if(mag < 0.00001) mag = 0.00001;
     const float magSq = mag * mag;
-
-    //sqrt (Ph(k))/sqrt(2)
+    //sqrt (Ph(k))/sqrt(2), where Ph is the Phillips spectrum
     const float h0k = clamp(sqrt((A/(magSq * magSq))
-        * pow(abs(dot(normalize(K), normalize(WindDirection))),kwExponent)
-        * exp(-(1.0/(magSq *L_ * L_)))
-        * exp(-magSq * pow(L/2000.0,2.0)))/ sqrt(2.0),-4000,4000);//the 2000 factor seems to be to avoid precision issues (significant wave actually happen only on high patch size
+        * pow(abs(dot(K, WindDirection)),kwExponent)
+        * exp(-(1.0/(magSq *HMax * HMax)))
+        * exp(-magSq * pow(L/2000.0,2.0)))/ sqrt(2.0),-4000,4000);//from the Tessendorf(1999) paper
 
     //sqrt(Ph(-k)/sqrt(2)
     const float h0_minusK = clamp(sqrt((A/(magSq * magSq))
         * pow(abs(dot(normalize(-K), normalize(WindDirection))),kwExponent)//exponents here are multiple of two
-        * exp(-(1.0/(magSq *L_ * L_)))
+        * exp(-(1.0/(magSq *HMax * HMax)))
         * exp(-magSq * pow(L/2000.0,2.0)))/ sqrt(2.0),-4000,4000);
 
     float4 gauss_random = gaussRND(id);
-    h0[id.xy] = float4(gauss_random.xy*h0k,gauss_random.z*h0_minusK,-gauss_random.w*h0_minusK);
+    h0[id.xy] = float4(gauss_random.xy*h0k,gauss_random.z*h0_minusK,gauss_random.w*h0_minusK);
     
 }
 
