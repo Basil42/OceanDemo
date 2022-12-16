@@ -1,5 +1,11 @@
 #pragma kernel SpectrumGen
 #pragma kernel ButterflyTextureGen
+
+#pragma multi_compile_local ButterflyDebug
+
+#ifdef ButterflyDebug
+#pragma kernel ButterFlyGenComparison
+#endif
 #include <HLSLSupport.cginc>
 #define _NORMALMAP
 
@@ -91,3 +97,25 @@ void ButterflyTextureGen(uint3 id: SV_dispatchThreadID)
     }
     
 }
+void alternateButterflyValues(uint step,uint index, out uint2 indices, out float2 twiddle)
+{
+    const float twoPi = 6.28318530718;
+    uint b = N >> (step + 1);
+    uint w = b * (index / b);
+    uint i = (w + index) % N;
+    sincos(-twoPi / N * w, twiddle.y, twiddle.x);
+    // if (Inverse)
+       //twiddle.y = -twiddle.y;
+    indices = uint2(i, i + b);
+}
+#ifdef ButterflyDebug
+RWTexture2D<float4> butterflyComparisonTexture;
+[numthreads(1,16,1)]
+void ButterFlyGenComparison(uint3 id: SV_dispatchThreadID)
+{
+    float2 indices;
+    float2 twiddle;
+    alternateButterflyValues(id.x,(id.x == 0 ? bitReversedBuffer[id.y] : id.y),indices,twiddle);
+    butterflyComparisonTexture[id.xy] = float4(twiddle,indices);//ButterflyTexture[id.xy] - float4(twiddle,indices);
+}
+#endif

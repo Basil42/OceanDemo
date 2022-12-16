@@ -56,7 +56,8 @@ void FFTOperation(int2 id)
     const uint HalfBufferSize = SAMPLESIZE*SAMPLESIZE;
     bool WriteBackHalfOfBuffer = true;
     DeviceMemoryBarrierWithGroupSync();
-    for(int Stage = 0; Stage < LOGSAMPLESIZE; Stage++)//if defining N and LogN in a define and using multi compile, it is possible to unroll this loop, here the gain seems minor enough to ignore it
+    [unroll(LOGSAMPLESIZE)]
+    for(int Stage = 0; Stage < LOGSAMPLESIZE; Stage++)
     {
         const float4 ButterflyData = _butterflyTexture[int2(Stage,id.x)];
         const float2 w = ButterflyData.xy;//twiddle

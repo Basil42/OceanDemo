@@ -58,6 +58,11 @@ namespace Ocean
         private int _singlePassFFTKernel = 2;
         private int _normalComputeKernelIndex = 4;
         
+        #if UNITY_EDITOR || DEVELOPMENT_BUILD
+        [Header("Debug")] [SerializeField] private bool butterflyComparison = true;
+        [SerializeField] private RawImage butterflyCompareDisplay;
+        #endif
+        
         #region Initialization
 
         private void Awake()
@@ -69,10 +74,15 @@ namespace Ocean
                 oceanUpdateShader.DisableKeyword(keyword);
             }
             var keywordToEnable = keywordSpace.FindKeyword(string.Concat("SAMPLE_", _numberOfSamples.ToString()));
-
-            Debug.Log(string.Concat("SAMPLE_", _numberOfSamples.ToString()));
             oceanUpdateShader.EnableKeyword(keywordToEnable);
-
+            #if UNITY_EDITOR || DEVELOPMENT_BUILD
+            var initKeywordSpace = oceanInitShader.keywordSpace;
+            foreach (var keyword in initKeywordSpace.keywords)
+            {
+                oceanInitShader.DisableKeyword(keyword);
+            }
+            if(butterflyComparison)oceanInitShader.EnableKeyword("ButterflyDebug");
+            #endif
         }
 
         private void Start()
@@ -105,7 +115,8 @@ namespace Ocean
             surfaceRenderer.material.SetTexture(NormalMapTextureMaterialID,_normalTexture,RenderTextureSubElement.Default);
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
             DebugBidings();
-            #endif
+            if (butterflyComparison) ButterflyCompare(butterflyCompareDisplay);
+#endif
         }
         private void BindTimeDependentBuffers()
         {
@@ -288,7 +299,7 @@ namespace Ocean
         #endregion
 
         #region textureDebug
-
+        #if UNITY_EDITOR || DEVELOPMENT_BUILD
         [SerializeField] private bool amplitudeDebug;
         [SerializeField] private bool spectrumDebug;
         [FormerlySerializedAs("TextureDebugAmplitudeDisplay")] [SerializeField] private RawImage textureDebugAmplitudeDisplay;
@@ -318,6 +329,24 @@ namespace Ocean
             
         }
 
+        private RenderTexture _butterflyCompareTexture;
+        private void ButterflyCompare(RawImage display)
+        {
+            var butterflyCompareKernel = oceanInitShader.FindKernel("ButterFlyGenComparison");
+            oceanInitShader.SetTexture(butterflyCompareKernel,"ButterflyTexture",_butterflyTexture);
+            oceanInitShader.SetBuffer(butterflyCompareKernel,"bitReversedBuffer",_bitReverseIndexes);
+            var nlog2 = 0; 
+            var n = _numberOfSamples;
+            while ((n >>= 1) != 0) nlog2++;
+            _butterflyCompareTexture = new RenderTexture(nlog2,_numberOfSamples ,0,RenderTextureFormat.ARGBFloat)
+            {
+                enableRandomWrite = true,filterMode = FilterMode.Point
+            };
+            oceanInitShader.SetTexture(butterflyCompareKernel,"butterflyComparisonTexture",_butterflyCompareTexture);
+            if (display != null) display.texture = _butterflyCompareTexture;
+            oceanInitShader.Dispatch(butterflyCompareKernel,nlog2,_numberOfSamples/16,1);
+        }
+        #endif
         #endregion
     }
     
