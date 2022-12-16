@@ -49,6 +49,50 @@ CBUFFER_END
 RWStructuredBuffer<Complex3> InOutFFTBuffer;//Size*size buffer taking the time dependent spectrum as input and outputting displacements (said displacement still need to be permuted and inverted)
 //TODO add a groupshared [2][N] sized buffer to cut down on buffer access, it requires significantly refactoring the butterfly texture
 //TODO extract the fft computation to reuse it in different kernels (like normals)
+groupshared Complex3 buffer[2][SAMPLESIZE];
+
+float2 ComplexMult(float2 a, float2 b)
+{
+    return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+}
+
+void ButterflyValues(uint step, uint index, out uint2 indices, out float2 twiddle)
+{
+    const float twoPi = 6.28318530718;
+    uint b = SAMPLESIZE >> (step + 1);
+    uint w = b * (index / b);
+    uint i = (w + index) % SAMPLESIZE;
+    sincos(-twoPi / SAMPLESIZE * w, twiddle.y, twiddle.x);
+    //if (Inverse)
+        twiddle.y = -twiddle.y;
+    indices = uint2(i, i + b);
+}
+
+Complex3 DoFft(uint threadIndex, Complex3 input)
+{
+    buffer[0][threadIndex] = input;
+    GroupMemoryBarrierWithGroupSync();
+    bool flag = false;
+    
+    [unroll(LOGSAMPLESIZE)]
+    for (uint step = 0; step < LOGSAMPLESIZE; step++)
+    {
+        uint2 inputsIndices;
+        float2 twiddle;
+        ButterflyValues(step, threadIndex, inputsIndices, twiddle);
+        
+        Complex3 v = buffer[flag][inputsIndices.y];
+        Complex3 v2 =buffer[flag][inputsIndices.x];
+        Complex3 addedValue = cmp_multiply(twiddle,v);
+        Complex3 result = { float2(v2.dx+addedValue.dx),float2(v2.dy+addedValue.dy),float2(v2.dz+addedValue.dz)};
+        buffer[!flag][threadIndex] =  result;
+            //+ float4(ComplexMult(twiddle, v.xy), ComplexMult(twiddle, v.zw));
+        flag = !flag;
+        GroupMemoryBarrierWithGroupSync();
+    }
+    
+    return buffer[flag][threadIndex];
+}
 void FFTOperation(int2 id)
 {
     int2 X = direction == 0 ? id.xy : id.yx;
@@ -85,7 +129,9 @@ void FFTOperation(int2 id)
 [numthreads(SAMPLESIZE,1,1)]
 void FFTCompute(uint3 id : SV_DispatchThreadID)
 {
-    FFTOperation(id.xy);
+    uint2 targetIndex = (direction ? id.yx : id.xy);
+    InOutFFTBuffer[targetIndex.x + SAMPLESIZE*targetIndex.y] = DoFft(id.x,InOutFFTBuffer[targetIndex.x + SAMPLESIZE*targetIndex.y]);
+    //FFTOperation(id.xy);
 }
 
 
