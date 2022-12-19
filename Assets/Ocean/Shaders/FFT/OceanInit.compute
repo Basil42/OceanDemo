@@ -1,11 +1,6 @@
 #pragma kernel SpectrumGen
 #pragma kernel ButterflyTextureGen
 
-#pragma multi_compile_local ButterflyDebug
-
-#ifdef ButterflyDebug
-#pragma kernel ButterFlyGenComparison
-#endif
 #include <HLSLSupport.cginc>
 #define _NORMALMAP
 
@@ -25,7 +20,7 @@ RWTexture2D<float4> h0;
 Texture2D<float4> noise;
 SamplerState pointClampSampler;
 #define M_PI 3.1415926535897932
-#define kwExponent 2.0
+#define kwExponent 6.0
 
 float4 gaussRND(uint3 id)
 {
@@ -84,8 +79,8 @@ void ButterflyTextureGen(uint3 id: SV_dispatchThreadID)
     if(id.x ==0)
     {
         //I think this is faster (no branching in exchange for 2 additional additions/subtractions), a tad less clear though
-        int topIndex = id.y - int(butterflyWing ?  0 : 1);
-        int botIndex = id.y + int(butterflyWing ? 1 : 0);
+        const int topIndex = id.y - int(butterflyWing ?  0 : 1);
+        const int botIndex = id.y + int(butterflyWing ? 1 : 0);
         ButterflyTexture[id.xy] = float4(twiddle, bitReversedBuffer[topIndex],bitReversedBuffer[botIndex]);
     }
     //second to log2(N)
@@ -97,25 +92,3 @@ void ButterflyTextureGen(uint3 id: SV_dispatchThreadID)
     }
     
 }
-void alternateButterflyValues(uint step,uint index, out uint2 indices, out float2 twiddle)
-{
-    const float twoPi = 6.28318530718;
-    uint b = N >> (step + 1);
-    uint w = b * (index / b);
-    uint i = (w + index) % N;
-    sincos(-twoPi / N * w, twiddle.y, twiddle.x);
-    // if (Inverse)
-       //twiddle.y = -twiddle.y;
-    indices = uint2(i, i + b);
-}
-#ifdef ButterflyDebug
-RWTexture2D<float4> butterflyComparisonTexture;
-[numthreads(1,16,1)]
-void ButterFlyGenComparison(uint3 id: SV_dispatchThreadID)
-{
-    float2 indices;
-    float2 twiddle;
-    alternateButterflyValues(id.x,(id.x == 0 ? bitReversedBuffer[id.y] : id.y),indices,twiddle);
-    butterflyComparisonTexture[id.xy] = float4(twiddle,indices);//ButterflyTexture[id.xy] - float4(twiddle,indices);
-}
-#endif
