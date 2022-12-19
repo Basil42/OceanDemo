@@ -149,6 +149,7 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
     //float4 Data3 = InOutFFTTextureArray[uint3(id.xy,3)];
     const float3 h = float3(Data0.x,Data0.z,Data1.x);//taking the real part of all components
     displacement[X] = float4(perm*(h/float(SAMPLESIZE*SAMPLESIZE)),1);
+    //calculate Normals from derivative here
 }
     float t;//this needs to be "tiled" somehow to not raise forever (and break)
     RWTexture2DArray<float4> timeSpectrumResults;

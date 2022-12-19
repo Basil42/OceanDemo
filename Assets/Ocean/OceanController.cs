@@ -56,10 +56,7 @@ namespace Ocean
         private int _singlePassFFTKernel = 2;
         private int _normalComputeKernelIndex = 4;
         
-        #if UNITY_EDITOR || DEVELOPMENT_BUILD
-        [Header("Debug")] [SerializeField] private bool butterflyComparison = true;
-        [SerializeField] private RawImage butterflyCompareDisplay;
-        #endif
+        
         
         #region Initialization
 
@@ -81,7 +78,6 @@ namespace Ocean
             {
                 oceanInitShader.DisableKeyword(keyword);
             }
-            if(butterflyComparison)oceanInitShader.EnableKeyword("ButterflyDebug");
             #endif
         }
 
@@ -118,7 +114,7 @@ namespace Ocean
             surfaceRenderer.material.SetTexture(DisplacementTextureMaterialID,_displacementTexture,RenderTextureSubElement.Default);
             surfaceRenderer.material.SetTexture(NormalMapTextureMaterialID,_normalTexture,RenderTextureSubElement.Default);
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            DebugBidings();
+            DebugBindings();
 #endif
         }
         private void BindTimeDependentBuffers()
@@ -126,21 +122,17 @@ namespace Ocean
             //some of these values could be packed in constant buffers (although they sadly updated out of sync)
             oceanUpdateShader.SetFloat("t",0f);
             oceanUpdateShader.SetInt("direction",0);
-            
-            
-            var buffersSize = _numberOfSamples * _numberOfSamples * 2;
-            
             _timeSpectrumKernel = oceanUpdateShader.FindKernel("TimeSpectrum");
             
             oceanUpdateShader.SetTexture(_timeSpectrumKernel,"h0", _h0ValuesTexture);
 
             _fourierComponentTextureArray =
                 new RenderTexture(_numberOfSamples,_numberOfSamples,0,GraphicsFormat.R32G32B32A32_SFloat)
- {
-     dimension = TextureDimension.Tex2DArray,
-     volumeDepth = 4, //(h_kt_dx,h_kt_dy),(h_kt_dz,h_kt_dxx),(h_kt_dyx,h_kt_dzx),(h_kt_dyz,h_kt_dzz)
-     enableRandomWrite = true
- };
+            {
+                dimension = TextureDimension.Tex2DArray,
+                volumeDepth = 4, //(h_kt_dx,h_kt_dy),(h_kt_dz,h_kt_dxx),(h_kt_dyx,h_kt_dzx),(h_kt_dyz,h_kt_dzz)
+                enableRandomWrite = true
+            };
             _fourierComponentTextureArray.Create();
             oceanUpdateShader.SetTexture(_singlePassFFTKernel,"InOutFFTTextureArray",_fourierComponentTextureArray);
             oceanUpdateShader.SetTexture(_timeSpectrumKernel,"timeSpectrumResults",_fourierComponentTextureArray);
@@ -192,64 +184,33 @@ namespace Ocean
             number++;
             return number;
         }
-        private uint[] GetReverseBitOrderedArray(uint length)//length of the returned array is padded to the next power of two
-        {
-            //This is far from the most efficient algorithm(and it allocates a LOT), but it works on any power of two, on any hardware, for any byte length
-            //If we need to compute this every frame, I'd make NumberOfSample constant (likely 256, as the max int16 is already very large)
-            length = RoundingToHigherPowerOfTwo(length);
-            
-            if (length <= 1)
-            {
-                return new uint[] { 0 };
-            }
-            else
-            {
-                var result = new uint[length];
-                var previousSequence = GetReverseBitOrderedArray(length / 2);//recursively getting the bit reversed sequence from the previous power of two
-                for (var i = 0; i < previousSequence.Length; i++)
-                {
-                    previousSequence[i] *= 2;
-                    result[i] = previousSequence[i];
-                }
-
-                var offset = length / 2;
-                for (var i = 0; i < previousSequence.Length; i++)
-                {
-                    result[i + offset] = result[i] + 1;
-                }
-
-                return result;
-            }
-
-            
-        }
         #endregion
 
         #region Runtime
         #if UNITY_EDITOR || DEVELOPMENT_BUILD
-        private LocalKeyword inversekeyword;
-        private bool inversekeywordenabled;
-        private bool keywordinit = false;
+        private LocalKeyword _inverseKeyword;
+        private bool _inverseKeywordEnabled;
+        private bool _keywordInit;
         #endif
         private void Update()
         {
             FourierComponents();
             
             oceanUpdateShader.SetInt("direction",0);
-            oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,_numberOfSamples,1);
+            oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,_numberOfSamples,4);
             oceanUpdateShader.SetInt("direction",1);
-            oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,_numberOfSamples,1);
+            oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,_numberOfSamples,4);
             
 
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if(amplitudeDebug)oceanUpdateShader.Dispatch(_amplitudeDebugKernel,_numberOfSamples/16,_numberOfSamples/16,1);
-            if (!keywordinit)
+            if (!_keywordInit)
             {
-                inversekeyword = oceanUpdateShader.keywordSpace.FindKeyword("INVERSE");
-                keywordinit = true;
+                _inverseKeyword = oceanUpdateShader.keywordSpace.FindKeyword("INVERSE");
+                _keywordInit = true;
             }
-            oceanUpdateShader.SetKeyword(inversekeyword,inversekeywordenabled);
-            inversekeywordenabled = !inversekeywordenabled;
+            oceanUpdateShader.SetKeyword(_inverseKeyword,_inverseKeywordEnabled);
+            _inverseKeywordEnabled = !_inverseKeywordEnabled;
             #endif
             
 
@@ -277,6 +238,7 @@ namespace Ocean
             //TODO: Release buffers only used for initialisation at the end of start
             _h0ValuesTexture.Release();
             _constantParamBuffer.Release();
+            _fourierComponentTextureArray.Release();
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if(_textureDebugAmplitudeTexture != null)_textureDebugAmplitudeTexture.Release();
             #endif
@@ -292,7 +254,7 @@ namespace Ocean
         [SerializeField] private RawImage textureDebugSpectrumDisplay;
         private RenderTexture _textureDebugAmplitudeTexture;
         private int _amplitudeDebugKernel;
-        private void DebugBidings()
+        private void DebugBindings()
         {
             //spectrum
             if (spectrumDebug && textureDebugSpectrumDisplay != null)
