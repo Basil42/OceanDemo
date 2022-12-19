@@ -45,26 +45,17 @@ float HorizontalScaling;
 float VerticalScaling;
 #endif
 CBUFFER_END
-RWStructuredBuffer<Complex3> InOutFFTBuffer;//Size*size buffer taking the time dependent spectrum as input and outputting displacements (said displacement still need to be permuted and inverted)
 RWTexture2DArray<float4> InOutFFTTextureArray;
 groupshared float4 FFT_Buffer[2][SAMPLESIZE];
-
-float2 ComplexMult(float2 a, float2 b)
-{
-    return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
-}
 
 void ButterflyValues(uint step, uint index, out uint2 indices, out float2 twiddle)//this is essentially the reverse of the texture method, and is strictly better, as it doesn't use a texture, small as it was
 {
     const float twoPi = 6.28318530718;
-    uint wingspan = SAMPLESIZE >> (step + 1);//this is equivalent to the "wingspan" of the butterfly in the old implementation, it converges towards 2 instead of SAMPLESIZE
-    uint w = wingspan * (index / wingspan);
+    const uint wingspan = SAMPLESIZE >> (step + 1);//this is equivalent to the "wingspan" of the butterfly in the old implementation, it converges towards 2 instead of SAMPLESIZE
+    const uint w = wingspan * (index / wingspan);
     uint i = (w + index) % SAMPLESIZE;
     sincos(-twoPi / SAMPLESIZE * w, twiddle.y, twiddle.x);
-    //if (Inverse)
-    #ifdef INVERSION
-    twiddle.y = -twiddle.y;
-    #endif
+    //here some implementation conditionally flip the sign the second twiddle factor, I found that it did not affect the results of this implementation 
     indices = uint2(i, i + wingspan);
 }
 
@@ -93,8 +84,8 @@ float4 DoFft(uint pixelIndex, float4 input)
 [numthreads(SAMPLESIZE,1,1)]
 void FFTCompute(uint3 id : SV_DispatchThreadID)
 {
-    uint2 targetIndex = (direction ? id.yx : id.xy);
-    InOutFFTTextureArray[id] = DoFft(id.x,InOutFFTTextureArray[id]);
+    const uint3 targetIndex = (direction ? id.yxz : id.xyz);
+    InOutFFTTextureArray[targetIndex] = DoFft(id.x,InOutFFTTextureArray[targetIndex]);
 }
 
 
@@ -151,22 +142,16 @@ void ComputeNormal(uint3 id : SV_DispatchThreadID)//working on 2x2 pixel quads, 
 void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
 {
     const int2 X = id.xy;
-    const uint BufferIndex = id.x + id.y*SAMPLESIZE;
-    
     const float perm = (int(X.x + X.y) & 1) ? -1.0f : 1.0f;//true if x+y is odd
-
-  
-    
-    
-    
-    
-    Complex3 Data = InOutFFTBuffer[BufferIndex];//guaranteed to be the correct half of the buffer as there are two passes of equal length
-    const float3 h = float3(Data.dx.x,Data.dy.x,Data.dz.x);//taking the real part of all components
+    float4 Data0 = InOutFFTTextureArray[id];//guaranteed to be the correct half of the buffer as there are two passes of equal length
+    float4 Data1 = InOutFFTTextureArray[uint3(id.xy,1)];
+    //float4 Data2 = InOutFFTTextureArray[uint3(id.xy,2)];
+    //float4 Data3 = InOutFFTTextureArray[uint3(id.xy,3)];
+    const float3 h = float3(Data0.x,Data0.z,Data1.x);//taking the real part of all components
     displacement[X] = float4(perm*(h/float(SAMPLESIZE*SAMPLESIZE)),1);
 }
     float t;//this needs to be "tiled" somehow to not raise forever (and break)
-    RWStructuredBuffer<Complex3> tilde_hkt;//a texture buffer might lay this out in memory like a texture
-    RWTexture2DArray<float4> timespectrumResults;
+    RWTexture2DArray<float4> timeSpectrumResults;
     [numthreads(16,16,1)]
     void TimeSpectrum(uint3 id: SV_dispatchThreadID)
     {
@@ -208,19 +193,17 @@ void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
         const float2 h_kt_dyz = K.y * float2(-h_kt_dy.y,h_kt_dy.x);
         const float2 h_kt_dzz = -(K.y * K.y * (1/mag) * h_kt_dy );
         
-        const Complex3 AmplitudeResult = { h_kt_dx, h_kt_dy, h_kt_dz};
-        tilde_hkt[id.x + id.y*SAMPLESIZE] = AmplitudeResult;
-        timespectrumResults[id] =             float4(h_kt_dx,h_kt_dy);
-        timespectrumResults[uint3(id.xy,1)] = float4(h_kt_dz,h_kt_dxx);
-        timespectrumResults[uint3(id.xy,2)] = float4(h_kt_dyx,h_kt_dzx);
-        timespectrumResults[uint3(id.xy,3)] = float4(h_kt_dyz,h_kt_dzz);//in another implementation, it is possible to pack them by pair, but I don't understand how that might work
+        timeSpectrumResults[id] =             float4(h_kt_dx,h_kt_dy);
+        timeSpectrumResults[uint3(id.xy,1)] = float4(h_kt_dz,h_kt_dxx);
+        timeSpectrumResults[uint3(id.xy,2)] = float4(h_kt_dyx,h_kt_dzx);
+        timeSpectrumResults[uint3(id.xy,3)] = float4(h_kt_dyz,h_kt_dzz);//in another implementation, it is possible to pack them by pair, but I don't understand how that might work
     }
     RWTexture2D<float4> DebugAmplitudeTexture;
     [numthreads(16,16,1)]
     void DebugAmplitude(uint3 id : SV_dispatchThreadID)
     {
-        Complex3 value = tilde_hkt[id.x + id.y*SAMPLESIZE];
-        float4 pixel = float4(value.dx.x,0,0,1);
+        float4 value = timeSpectrumResults[id];
+        const float4 pixel = float4(value.z,0,0,1);
         DebugAmplitudeTexture[id.xy] = pixel;
         uint2 offsetIndex = float2(id.x,id.y + SAMPLESIZE);
         DebugAmplitudeTexture[offsetIndex.xy] = pixel;

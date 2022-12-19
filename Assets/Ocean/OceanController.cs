@@ -37,12 +37,9 @@ namespace Ocean
         //GPU resources
         //using a single texture as they are always read from and written to at the same time (h0k is on rg h0minusk* is ba)
         private RenderTexture _h0ValuesTexture;
-        private RenderTexture _butterflyTexture;
         private RenderTexture _displacementTexture;//dx in red dy in green, dz in blue
         private RenderTexture _normalTexture;
         private RenderTexture _fourierComponentTextureArray;
-        private ComputeBuffer _fourierComponentBuffer;//Using a buffer because I can't fit a float6 in a texture
-        private ComputeBuffer _bitReverseIndexes;
         
         //constant buffers
         private ComputeBuffer _constantParamBuffer;
@@ -117,13 +114,11 @@ namespace Ocean
             _constantParamBuffer.SetData(bufferData);
             InitialSpectrumGeneration();
             
-            ButterFlyTextureGeneration();
             BindTimeDependentBuffers();
             surfaceRenderer.material.SetTexture(DisplacementTextureMaterialID,_displacementTexture,RenderTextureSubElement.Default);
             surfaceRenderer.material.SetTexture(NormalMapTextureMaterialID,_normalTexture,RenderTextureSubElement.Default);
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
             DebugBidings();
-            if (butterflyComparison) ButterflyCompare(butterflyCompareDisplay);
 #endif
         }
         private void BindTimeDependentBuffers()
@@ -139,8 +134,6 @@ namespace Ocean
             
             oceanUpdateShader.SetTexture(_timeSpectrumKernel,"h0", _h0ValuesTexture);
 
-            _fourierComponentBuffer = new ComputeBuffer(buffersSize, sizeof(float) * 6);
-            oceanUpdateShader.SetBuffer(_timeSpectrumKernel,"tilde_hkt",_fourierComponentBuffer);
             _fourierComponentTextureArray =
                 new RenderTexture(_numberOfSamples,_numberOfSamples,0,GraphicsFormat.R32G32B32A32_SFloat)
  {
@@ -150,18 +143,16 @@ namespace Ocean
  };
             _fourierComponentTextureArray.Create();
             oceanUpdateShader.SetTexture(_singlePassFFTKernel,"InOutFFTTextureArray",_fourierComponentTextureArray);
-            oceanUpdateShader.SetTexture(_timeSpectrumKernel,"InOutFFTTextureArray",_fourierComponentTextureArray);
+            oceanUpdateShader.SetTexture(_timeSpectrumKernel,"timeSpectrumResults",_fourierComponentTextureArray);
             _singlePassFFTKernel = oceanUpdateShader.FindKernel("FFTCompute");
-            oceanUpdateShader.SetTexture(_singlePassFFTKernel,"_butterflyTexture",_butterflyTexture);
-            oceanUpdateShader.SetBuffer(_timeSpectrumKernel,"timespectrumResults",_fourierComponentBuffer);
             
             _permutationKernelIndex = oceanUpdateShader.FindKernel("InversionAndPermutation");
-            oceanUpdateShader.SetBuffer(_permutationKernelIndex,"InOutFFTBuffer",_fourierComponentBuffer);
           
             
             _displacementTexture =
                 new RenderTexture(_numberOfSamples, _numberOfSamples, 0,RenderTextureFormat.ARGBFloat) {enableRandomWrite = true, filterMode = FilterMode.Point};//Default format, wasting the alpha channel but R32G32B32 isn't supported everywhere
             oceanUpdateShader.SetTexture(_permutationKernelIndex,"displacement",_displacementTexture);
+            oceanUpdateShader.SetTexture(_permutationKernelIndex,"InOutFFTTextureArray",_fourierComponentTextureArray);
             _normalComputeKernelIndex = oceanUpdateShader.FindKernel("ComputeNormal");
             _normalTexture = new RenderTexture(_numberOfSamples, _numberOfSamples, 0, RenderTextureFormat.ARGBFloat)//probably don't need full float32
                 { enableRandomWrite = true, filterMode = FilterMode.Point };
@@ -169,38 +160,7 @@ namespace Ocean
             oceanUpdateShader.SetTexture(_normalComputeKernelIndex,"displacement",_displacementTexture);
            
         }
-        private void ButterFlyTextureGeneration()
-        {
-            try
-            {
-                var kernel = oceanInitShader.FindKernel("ButterflyTextureGen");
-                _bitReverseIndexes = new ComputeBuffer(_numberOfSamples, sizeof(uint));
-                var reversedIndexArray = GetReverseBitOrderedArray((uint)_numberOfSamples);
-                _bitReverseIndexes.SetData(reversedIndexArray);
-                oceanInitShader.SetBuffer(kernel, "bitReversedBuffer", _bitReverseIndexes);
-                
-                //texture setup
-                var nlog2 = 0; 
-                var n = _numberOfSamples;
-
-
-                while ((n >>= 1) != 0) nlog2++;
-                _butterflyTexture = new RenderTexture(nlog2, _numberOfSamples, 0,RenderTextureFormat.ARGBFloat)
-                {
-                    enableRandomWrite = true,filterMode = FilterMode.Point
-                };
-                _butterflyTexture.Create();
-                oceanInitShader.SetTexture(kernel,"ButterflyTexture",_butterflyTexture,0);
-                oceanInitShader.Dispatch(kernel,nlog2 ,_numberOfSamples / 16,1);
-                
-            }
-            catch(InvalidOperationException ex)
-            {
-                if(_numberOfSamples == 0)Debug.LogError("Number of sample cannot be 0. Please set it to a power of 2");
-                Debug.LogException(ex);
-            }
-            
-        }
+       
         private void InitialSpectrumGeneration()
         {
 
@@ -316,8 +276,6 @@ namespace Ocean
         {
             //TODO: Release buffers only used for initialisation at the end of start
             _h0ValuesTexture.Release();
-            _fourierComponentBuffer.Release();
-            _bitReverseIndexes.Release();//this could be released earlier
             _constantParamBuffer.Release();
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if(_textureDebugAmplitudeTexture != null)_textureDebugAmplitudeTexture.Release();
@@ -352,27 +310,9 @@ namespace Ocean
             _textureDebugAmplitudeTexture.Create();
             textureDebugAmplitudeDisplay.texture = _textureDebugAmplitudeTexture;
             _amplitudeDebugKernel = oceanUpdateShader.FindKernel("DebugAmplitude");
-            oceanUpdateShader.SetBuffer(_amplitudeDebugKernel,"tilde_hkt",_fourierComponentBuffer);
             oceanUpdateShader.SetTexture(_amplitudeDebugKernel,"DebugAmplitudeTexture",_textureDebugAmplitudeTexture);
-            
-        }
+            oceanUpdateShader.SetTexture(_amplitudeDebugKernel,"timeSpectrumResults",_fourierComponentTextureArray);
 
-        private RenderTexture _butterflyCompareTexture;
-        private void ButterflyCompare(RawImage display)
-        {
-            var butterflyCompareKernel = oceanInitShader.FindKernel("ButterFlyGenComparison");
-            oceanInitShader.SetTexture(butterflyCompareKernel,"ButterflyTexture",_butterflyTexture);
-            oceanInitShader.SetBuffer(butterflyCompareKernel,"bitReversedBuffer",_bitReverseIndexes);
-            var nlog2 = 0; 
-            var n = _numberOfSamples;
-            while ((n >>= 1) != 0) nlog2++;
-            _butterflyCompareTexture = new RenderTexture(nlog2,_numberOfSamples ,0,RenderTextureFormat.ARGBFloat)
-            {
-                enableRandomWrite = true,filterMode = FilterMode.Point
-            };
-            oceanInitShader.SetTexture(butterflyCompareKernel,"butterflyComparisonTexture",_butterflyCompareTexture);
-            if (display != null) display.texture = _butterflyCompareTexture;
-            oceanInitShader.Dispatch(butterflyCompareKernel,nlog2,_numberOfSamples/16,1);
         }
         #endif
         #endregion
