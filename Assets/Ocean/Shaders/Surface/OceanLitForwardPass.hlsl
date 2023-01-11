@@ -1,16 +1,20 @@
 ﻿#ifndef OCEAN_LIT_PASS_INCLUDED
 #define OCEAN_LIT_PASS_INCLUDED
+
+
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
-#include "Voronoi.hlsl"
+
+//#include "Voronoi.hlsl"
 #include "OceanLitInput.hlsl"//it will be excluded, it's mostly to help Rider
-#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/ParallaxMapping.hlsl"
+
+
 
 struct Attributes
 {
     float4 positionOS : POSITION;
     float2 uv : TEXCOORD0;
-    float2 staticLightmapUV   : TEXCOORD1;
-    float2 dynamicLightmapUV  : TEXCOORD2;
+    float2 lightmapUV : TEXCOORD1;
                 
     //UNITY_VERTEX_INPUT_INSTANCE_ID 
 };
@@ -18,26 +22,28 @@ struct ControlPoint
 {
     float4 positionOS : INTERNALTESSPOS;
     float2 uv : TEXCOORD0;
-    float2 staticLightmapUV   : TEXCOORD1;
-    float2 dynamicLightmapUV  : TEXCOORD2;
-    //do not need a color, as it is global
+    float2 lightmapUV : TEXCOORD1;
+
                 
 };
 struct Varyings
 {
     float4 positionCS : SV_POSITION;
     float2 uv : TEXCOORD0;
+    DECLARE_LIGHTMAP_OR_SH(lightmapUV,vertexSH,1);//this trips up rider
     float3 positionWS : TEXCOORD2;//possibly useful, but I'd like it removed
-    float3 normalWS : NORMAL;
-    float4 tangentWS : TANGENT;
+    half3 normalWS : TEXCOORD3;
+    half3 normalOS :TEXCOORD5;
+    //I could pack normals here and interpolate them
     #ifdef _ADDITIONAL_LIGHTS_VERTEX
-    half4 fogFactorAndVertexLight : TEXCOORD5;// x: fogFactor, yzw: vertex light
+    half4 fogFactorAndVertexLight : TEXCOORD6;
     #else
-    half fogFactor : TEXCOORD5;
+    half fogFactor : TEXCOORD6;
     #endif
-    half3 viewDirTS : TEXCOORD7;//almost certainly useful
-    DECLARE_LIGHTMAP_OR_SH(staticLightmapUV, vertexSH, 8);
-    //vertex id can also be included here
+    #ifdef REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR
+    float4 shadowCoord : TEXCOORD7;
+    #endif
+    
 };
 //almost certain you can just pass attributes down the chain
 ControlPoint TesselationVertexProgram(Attributes v)
@@ -45,9 +51,9 @@ ControlPoint TesselationVertexProgram(Attributes v)
     ControlPoint p;
     p.positionOS = v.positionOS;
     p.uv = v.uv;
-    
-    p.dynamicLightmapUV = v.dynamicLightmapUV;
-    p.staticLightmapUV = v.staticLightmapUV;
+    p.lightmapUV = v.lightmapUV;
+    // p.dynamicLightmapUV = v.dynamicLightmapUV;
+    // p.staticLightmapUV = v.staticLightmapUV;
     return  p;
 }
 struct TesselationFactors
@@ -91,47 +97,51 @@ ControlPoint hull(InputPatch<ControlPoint,3> patch, uint id : SV_OutputControlPo
 float normalFiltering;
 Varyings vert (Attributes input)
 {
-    Varyings output = (Varyings)0;
-    output.uv = TRANSFORM_TEX(input.uv,_DisplacementTex);
-
     
-    float3 Displacement = _DisplacementTex.SampleLevel(bilinear_clamp_sampler,output.uv,0).rgb;//tex2Dlod(sampler_DisplacementTex,float4(input.uv,0,0)).rgb;
+    Varyings output;
+    
+    
+    output.uv = TRANSFORM_TEX(input.uv,_DataTextureArray);
+    //data sampling, computing the normal on a map could halve these samples
+    float4 Data0 = _DataTextureArray.SampleLevel(bilinear_clamp_sampler,float3(input.uv,0),0);
+    float4 Data1 = _DataTextureArray.SampleLevel(bilinear_clamp_sampler,float3(input.uv,1),0);
+    float4 Data2 = _DataTextureArray.SampleLevel(bilinear_clamp_sampler,float3(input.uv,2),0);
+    float4 Data3 = _DataTextureArray.SampleLevel(bilinear_clamp_sampler,float3(input.uv,3),0);
+    
+    float3 Displacement = float3(Data0.x,Data0.z,Data1.x);
     Displacement.y *= _HeightScaleFactor;
     Displacement.xz *= _HorizontalScaleDampening;
     VertexPositionInputs position_inputs = GetVertexPositionInputs(input.positionOS.xyz + Displacement);
-    float3 normalOS = _NormalTexture.SampleLevel(bilinear_clamp_sampler,output.uv,0).rgb;
-    //these tangent calc are wrong
-    
-    // float3 tangentCandidate1 = cross( normalOS,float3(0,0,1));
-    // float3 tangentCandidate2 = cross( normalOS,float3(1,0,0));
-    float4 tangentOS = float4(normalOS.y +normalOS.z,normalOS.z - normalOS.x,-normalOS.x-normalOS.y,1.0f);//float4(length(tangentCandidate1) > length(tangentCandidate2) ? tangentCandidate1 : tangentCandidate2,GetOddNegativeScale());//
-    VertexNormalInputs normalInputs = GetVertexNormalInputs(normalOS,tangentOS);
-    
-    output.positionCS = position_inputs.positionCS;
     output.positionWS = position_inputs.positionWS;
-    //here I need an ifdef for normal maps. See cyan lit
-    output.normalWS = normalInputs.normalWS;
-    //this is wrapped in keywords in the lit shader
+    output.positionCS = position_inputs.positionCS;
 
+    //normal calculation likely faulty
+    const float Y_dx = Data2.x* _HeightScaleFactor;
+    const float X_dx = Data1.z* _HorizontalScaleDampening;
+    const float Y_dz = Data3.x* _HeightScaleFactor;
+    const float Z_dz = Data3.z* _HorizontalScaleDampening;
+    const float3 normalOS = normalize(float3((Y_dx/(1+X_dx))*10.0f,1,10.0f*(Y_dz/(1+Z_dz))));
     
-    
-    output.tangentWS = half4(normalInputs.tangentWS.xyz,1.0f);
-    
-    
+    VertexNormalInputs normal_inputs = GetVertexNormalInputs(normalOS);
 
-    const half3 viewDirWS = GetWorldSpaceNormalizeViewDir(position_inputs.positionWS);
-    const half3 viewDirTS = GetViewDirectionTangentSpace(output.tangentWS, output.normalWS,viewDirWS);
-    output.viewDirTS = viewDirTS;
-    half fogFactor = 0;//set to 0 to be computed in the fragment shader
+    half fogFactor = ComputeFogFactor(position_inputs.positionCS.z);
+
+    output.normalWS = NormalizeNormalPerVertex(normal_inputs.normalWS);
+    output.normalOS = normalOS;
+    //not 100% sure these are useful, hopefully they work with tesselation
+    OUTPUT_LIGHTMAP_UV(input.lightmapUV, unity_LightmapST,output.lightmapUV);
+    OUTPUT_SH(output.normalWS.xyz,output.vertexSH);//used for light probes
     #ifdef _ADDITIONAL_LIGHTS_VERTEX
-    half3 vertexLight = VertexLighting(position_inputs.positionWS,normalInputs.normalWS);
-    fogFactorAndVertexLight = half4(fogFactor, vertexLight);
+    half3 vertexLight = VertexLighting(position_inputs.positionWS,normal_inputs.normalWS);
+    output.fogFactorAndVertexLight = half4(fogFactor, vertexLight);
     #else
     output.fogFactor = fogFactor;
     #endif
-    //assuming the _FOG_FRAGMENT check is an internal sanity check
     
-    //not sure what SH is, possibly just shadows
+    
+    #ifdef REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATION
+    output.shadowCoord = GetShadowCoord(position_inputs);
+    #endif
     return output;
 }
 [domain("tri")]
@@ -146,55 +156,53 @@ Varyings domain(TesselationFactors factors, OutputPatch<ControlPoint,3> patch, f
                 
     DomainCalc(positionOS)
     DomainCalc(uv)
-    DomainCalc(staticLightmapUV);
-    DomainCalc(dynamicLightmapUV);
+    DomainCalc(lightmapUV)
     return vert(v);
 }
-void InitializeInputData(Varyings input, half3 normalTS,out InputData inputData)
+
+float NormalVis;
+float TangentVis;
+half4 frag (Varyings IN) : SV_Target
 {
-    inputData = (InputData)0;
-    inputData.positionWS = input.positionWS;
-    const half3 viewDirWS = GetWorldSpaceNormalizeViewDir(input.positionWS);//I already have a call of this at a previous stage
-    inputData.normalWS = input.normalWS;
-    inputData.normalWS = NormalizeNormalPerPixel(inputData.normalWS);
-    inputData.viewDirectionWS = viewDirWS;
+    SurfaceData surface_data = (SurfaceData)0;
+    surface_data.albedo = _Color.rgb;
+    surface_data.alpha = _Opacity;
+    surface_data.normalTS = SampleNormal(IN.uv,TEXTURE2D_ARGS(_BumpMap,sampler_BumpMap),1 );
+    surface_data.emission = half3(0,0,0);
+    surface_data.occlusion = 1.0h;//ignoring occlusion for now
+    #if _SPECULAR_SETUP
+    surface_data.metallic = 1.0h;
+    surface_data.specular = _SpecGloss.rgb;
+    #else
+    surface_data.metallic = _SpecGloss.r;
+    #endif
+    surface_data.smoothness = _Smoothness;
+
+    InputData inputData = (InputData)0;
+    inputData.positionWS = IN.positionWS;
+    inputData.viewDirectionWS = SafeNormalize(GetWorldSpaceViewDir(IN.positionWS));
+    inputData.normalWS = NormalizeNormalPerPixel(IN.normalOS);
     #if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR)
-    inputData.shadowCoord = input.shadowCoord;
+    inputData.shadowCoord = IN.shadowCoord;//for some reason unity trips up on this
     #elif defined(MAIN_LIGHT_CALCULATE_SHADOWS)
     inputData.shadowCoord = TransformWorldToShadowCoord(inputData.positionWS);
     #else
     inputData.shadowCoord = float4(0, 0, 0, 0);
     #endif
+
     #ifdef _ADDITIONAL_LIGHTS_VERTEX
-    inputData.fogCoord = InitializeInputDataFog(float4(input.positionWS, 1.0), input.fogFactorAndVertexLight.x);
-    inputData.vertexLighting = input.fogFactorAndVertexLight.yzw;
+    inputData.fogCoord = IN.fogFactorAndVertexLight.x;
+    inputData.vertexLighting = IN.fogFactorAndVertexLight.yzw;
     #else
-    inputData.fogCoord = InitializeInputDataFog(float4(input.positionWS, 1.0), input.fogFactor);
+    inputData.fogCoord = IN.fogFactor;
+    inputData.vertexLighting = half3(0, 0, 0);
     #endif
+    inputData.bakedGI = SAMPLE_GI(IN.lightmapUV,IN.vertexSH,inputData.normalWS);
+    inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(IN.positionCS);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(IN.lightmapUV);
 
-    inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.positionCS);
-    inputData.shadowMask = SAMPLE_SHADOWMASK(staticLightmapUV);
-}
-
-float NormalVis;
-float TangentVis;
-
-half4 frag (Varyings IN) : SV_Target
-{
-    IN.normalWS = normalFiltering ? _NormalTexture.SampleLevel(bilinear_clamp_sampler,IN.uv,0) : _NormalTexture.SampleLevel(point_clamp_sampler,IN.uv,0);
-    const float3 normalTS = normalFiltering ? float3(0.0,-1.0,0.0) : float3(0.0,0.0,1.0);//TransformWorldToTangent(IN.normalWS,CreateTangentToWorld(IN.normalWS,IN.tangentWS.xyz,IN.tangentWS.w));//always return 0,0,1
-    // //No need for ids
-    SurfaceData surface_data;
-    InitializeOceanLitSurfaceData(IN.uv,surface_data,normalTS);
-    
-    InputData input_data;
-    InitializeInputData(IN,surface_data.normalTS,input_data);
-    
-    half4 color = UniversalFragmentPBR(input_data,surface_data);
-    
-    color.rgb = MixFog(color.rgb, input_data.fogCoord);
-    if(NormalVis)color.rgb = _NormalTexture.Sample(bilinear_clamp_sampler,IN.uv);
-    if(TangentVis)color.rgb = IN.tangentWS;
-    return color;
+    half4 color = UniversalFragmentPBR(inputData,surface_data);
+    color.rgb = MixFog(color.rgb, inputData.fogCoord);
+    return NormalVis ? float4(IN.normalWS.r,0,0,1) : color;
 }
 #endif

@@ -33,6 +33,10 @@ Material:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
+    - _DataTextureArray:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _DisplacementTex:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
@@ -49,8 +53,8 @@ Material:
     - _HeightScaleFactor: 7.48
     - _HorizontalScaleDampening: 0.016
     - _MaxTessDistance: 64
-    - _Opacity: 0.825
-    - _Smoothness: 1
+    - _Opacity: 1
+    - _Smoothness: 0.537
     - _Tess: 48.8
     - _Weight: 0
     - normalFiltering: 1

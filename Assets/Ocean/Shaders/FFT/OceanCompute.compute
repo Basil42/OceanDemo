@@ -1,13 +1,9 @@
 #include <HLSLSupport.cginc>
 #include "ComplexOperators.compute"
-#define _NORMALMAP
 #pragma kernel TimeSpectrum
 #pragma kernel InversionAndPermutation
 #pragma kernel FFTCompute
 #pragma kernel DebugAmplitude
-#ifdef _NORMALMAP
-#pragma kernel ComputeNormal
-#endif
 
 #pragma multi_compile_local SAMPLE_64 SAMPLE_128 SAMPLE_256 SAMPLE_512 SAMPLE_1024
 #if defined(SAMPLE_1024)
@@ -37,13 +33,7 @@ int direction;
 
 CBUFFER_START(RarelyUpdated)
 int N;
-int LogN;
 int L;
-#ifdef _NORMALMAP
-float pixelStep;//distance in Unity units between each horizontal pixel (as real dimensions are lost to concession made to float precision)
-float HorizontalScaling;
-float VerticalScaling;
-#endif
 CBUFFER_END
 RWTexture2DArray<float4> InOutFFTTextureArray;
 groupshared float4 FFT_Buffer[2][SAMPLESIZE];
@@ -87,69 +77,16 @@ void FFTCompute(uint3 id : SV_DispatchThreadID)
     const uint3 targetIndex = (direction ? id.yxz : id.xyz);
     InOutFFTTextureArray[targetIndex] = DoFft(id.x,InOutFFTTextureArray[targetIndex]);
 }
-
-
-RWTexture2D<float4> displacement;
-#ifdef _NORMALMAP
-RWTexture2D<float4> normalMap;
-float3 getPositionFromDisplacement(uint2 index)
-{
-    float3 result = displacement[index].xyz;
-    uint2 localIndex = index % 2;
-    result.xz *= HorizontalScaling;
-    result.x += localIndex.x *pixelStep;
-    result.z += localIndex.y *pixelStep;
-    result.y *= VerticalScaling;
-    return result;
-}
-[numthreads(8,8,1)]
-void ComputeNormal(uint3 id : SV_DispatchThreadID)//working on 2x2 pixel quads, choose the number of threads accordingly
-{
-    const uint2 index00 = id.xy*2;
-    const uint2 index01 = uint2(index00.x,index00.y+1);
-    const uint2 index10 = uint2(index00.x+1,index00.y);
-    const uint2 index11 = uint2(index10.x,index01.y);
-
-    float3 position00 = getPositionFromDisplacement(index00);
-    float3 position01 = getPositionFromDisplacement(index01);
-    float3 position10 = getPositionFromDisplacement(index10);
-    float3 position11 = getPositionFromDisplacement(index11);
-    
-    const float3 ddx0 = (position00.xyz - position10.xyz)/(position00.x - position10.x);
-    const float3 ddx1 = (position01.xyz - position11.xyz)/(position01.x - position11.x);
-    const float3 ddy0 = (position00.xyz - position01.xyz)/(position00.z - position01.z);
-    const float3 ddy1 = (position10.xyz - position11.xyz)/(position10.z - position11.z);
-
-    float3 normal00 = float3(normalize(cross(ddx0,ddy0)));
-    float3 normal01 = float3(normalize(cross(ddx0,ddy1)));
-    float3 normal10 = float3(normalize(cross(ddx1,ddy0)));
-    float3 normal11 = float3(normalize(cross(ddx1,ddy1)));
-
-    const int sign00 = sign(normal00.y);
-    const int sign01 = sign(normal01.y);
-    const int sign10 = sign(normal10.y);
-    const int sign11 = sign(normal11.y);
-
-    normalMap[index00] = float4(sign00 * normal00,1.0);
-    normalMap[index01] = float4(sign01 * normal01,1.0);
-    normalMap[index10] = float4(sign10 * normal10,1.0);
-    normalMap[index11] = float4(sign11 * normal11,1.0);
-    
-}
-#endif
-
-[numthreads(16,16,1)]
-void InversionAndPermutation(uint3 id : SV_DispatchThreadID)
+float4 DoInversionAndPermutation(float4 input, uint2 id)
 {
     const int2 X = id.xy;
     const float perm = (int(X.x + X.y) & 1) ? -1.0f : 1.0f;//true if x+y is odd
-    float4 Data0 = InOutFFTTextureArray[id];//guaranteed to be the correct half of the buffer as there are two passes of equal length
-    float4 Data1 = InOutFFTTextureArray[uint3(id.xy,1)];
-    //float4 Data2 = InOutFFTTextureArray[uint3(id.xy,2)];
-    //float4 Data3 = InOutFFTTextureArray[uint3(id.xy,3)];
-    const float3 h = float3(Data0.x,Data0.z,Data1.x);//taking the real part of all components
-    displacement[X] = float4(perm*(h/float(SAMPLESIZE*SAMPLESIZE)),1);
-    //calculate Normals from derivative here
+    return perm*(input/float(SAMPLESIZE*SAMPLESIZE));
+}
+[numthreads(16,16,1)]
+void InversionAndPermutation(uint3 id: SV_DispatchThreadID)
+{
+    InOutFFTTextureArray[id] = DoInversionAndPermutation(InOutFFTTextureArray[id],id.xy);
 }
     float t;//this needs to be "tiled" somehow to not raise forever (and break)
     RWTexture2DArray<float4> timeSpectrumResults;

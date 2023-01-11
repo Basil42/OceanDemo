@@ -2,8 +2,7 @@ Shader "Custom/OceanShader"
 {
     Properties
     {
-        _DisplacementTex ("Displacement Texture", 2D) = "black" {}
-        _NormalTexture("NormalRenderTexture",2D) = "black" {}
+        _DataTextureArray("texture array", 2DArray) = "black" {}
         _Color ("MainColor", Color) =  (.5,.5,.5,1)
         _MaxTessDistance("Max Tess distance", Range(1,64)) = 20
         _Tess("Tesselation",Range(1,64)) = 20
@@ -22,7 +21,8 @@ Shader "Custom/OceanShader"
 
         Pass
         {
-            
+            Name "ForwardLit"
+            Tags {"LightMode" = "UniversalForward" }
             //trying to reproduce the Unity way of splitting files, not a fan
             Blend SrcAlpha OneMinusSrcAlpha //"traditional" transparency
             BlendOp Add
@@ -34,7 +34,21 @@ Shader "Custom/OceanShader"
             #pragma fragment frag
             #pragma hull hull
             #pragma domain domain
-            //VFACE semantic can be used to flip normal when seeing the water surface through itself.
+            #pragma shader_feature_local_fragment _SPECULARHIGHLIGHTS_OFF
+            #pragma shader_feature_local_fragment _ENVIRONMENTREFLECTIONS_OFF
+            #pragma shader_feature_local_fragment _SPECULAR_SETUP
+            #pragma shader_feature_local _RECEIVE_SHADOWS_OFF
+            
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION 
+            #pragma multi_compile _ LIGHTMAP_SHADOW_MIXING 
+            #pragma multi_compile _ SHADOWS_SHADOWMASK
+            
+            #pragma multi_compile _ LIGHTMAP_ON
+            #pragma multi_compile _ DIRLIGHTMAP_COMBINED
+            #pragma multi_compile_fog
+           
             //"crest" detection ? SoT has a smooth transition to it's lighter and textured crests, probably need to pass the information in the fragment input
             //Tesselation benchmark (there's probably a lot of room to optimize while keeping the look of SoT, quite difficult to retro engineer)
             

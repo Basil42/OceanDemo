@@ -46,7 +46,7 @@ namespace Ocean
         private int _frequentUpdateBufferId;
         private int _permutationKernelIndex;
 
-        private static readonly int DisplacementTextureMaterialID = Shader.PropertyToID("_DisplacementTex");
+        private static readonly int TextureArrayMaterialID = Shader.PropertyToID("_DataTextureArray");
         private static readonly int NormalMapTextureMaterialID = Shader.PropertyToID("_NormalTexture");
         private static readonly int HeightScalingMaterialID = Shader.PropertyToID("_HeightScaleFactor");
         private static readonly int HorizontalScalingMaterialID = Shader.PropertyToID("_HorizontalScaleDampening");
@@ -54,70 +54,47 @@ namespace Ocean
         private float _t;//initialized to 0
         private int _timeSpectrumKernel = 1;
         private int _singlePassFFTKernel = 2;
-        private int _normalComputeKernelIndex = 4;
-        
-        
-        
         #region Initialization
-
         private void Awake()
         {
             _numberOfSamples = (int)sampleSize;
-            //sample size shader variant selection
-            var keywordSpace = oceanUpdateShader.keywordSpace;
-            foreach (var keyword in keywordSpace.keywords)
-            {
-                oceanUpdateShader.DisableKeyword(keyword);
-            }
-            var keywordToEnable = keywordSpace.FindKeyword(string.Concat("SAMPLE_", _numberOfSamples.ToString()));
-            oceanUpdateShader.EnableKeyword(keywordToEnable);
-            //debug keywords, unfortunatly compute shader don't support shader_feature, I'll need another way to strip debug keywords
+            RuntimeShaderKeywordSetup();
+            //debug keywords, unfortunately compute shader don't support shader_feature, I'll need another way to strip debug keywords
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            var initKeywordSpace = oceanInitShader.keywordSpace;
-            foreach (var keyword in initKeywordSpace.keywords)
-            {
-                oceanInitShader.DisableKeyword(keyword);
-            }
+            DebugKeywordsSettings();
             #endif
         }
-
         private void Start()
         {
             if (_numberOfSamples <= 0) _numberOfSamples = 1;
             //rounding to the next power of two is not needed anymore, but I'll leave it as a sanity check
             _numberOfSamples = (int)RoundingToHigherPowerOfTwo(Convert.ToUInt32(_numberOfSamples));
-            
-            
-            _constantParamBuffer = new ComputeBuffer(6, sizeof(int), ComputeBufferType.Constant);
-            oceanInitShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*6);
-            oceanUpdateShader.SetConstantBuffer("RarelyUpdated",_constantParamBuffer,0,sizeof(int)*6);
-            #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            var meshpatchSize = GetComponent<MeshRenderer>().bounds.size.x;
-            var patchStep =  meshpatchSize/ _numberOfSamples;
-            Debug.Log($"Lattice step is {patchStep}, total patch length {meshpatchSize}, step-L ratio {patchStep/((windSpeed*windSpeed)/9.81f)}");
-            #endif
-            byte[] bufferData = new byte[24];
-            //TODO clean this cbuffer
-            BitConverter.GetBytes(_numberOfSamples).CopyTo(bufferData,0);
-            BitConverter.GetBytes((int)Mathf.Log(_numberOfSamples, 2)).CopyTo(bufferData,4);
-            BitConverter.GetBytes(patchSize).CopyTo(bufferData,8);
-            BitConverter.GetBytes(patchStep).CopyTo(bufferData,12);
-            //scaling factors
-            BitConverter.GetBytes(surfaceRenderer.material.GetFloat(HorizontalScalingMaterialID)).CopyTo(bufferData,16);
-            BitConverter.GetBytes(surfaceRenderer.material.GetFloat(HeightScalingMaterialID)).CopyTo(bufferData,20);
-            
-            
-            _constantParamBuffer.SetData(bufferData);
-            InitialSpectrumGeneration();
-            
-            BindTimeDependentBuffers();
-            surfaceRenderer.material.SetTexture(DisplacementTextureMaterialID,_displacementTexture,RenderTextureSubElement.Default);
-            surfaceRenderer.material.SetTexture(NormalMapTextureMaterialID,_normalTexture,RenderTextureSubElement.Default);
-            #if UNITY_EDITOR || DEVELOPMENT_BUILD
+            ConstantBufferBinding();//bind a constant buffer shared by the two compute shaders
+            InitialSpectrumGeneration();//set up binding and run the initialization compute shader
+            RuntimeComputeBindings();
+            MaterialBindings();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             DebugBindings();
 #endif
         }
-        private void BindTimeDependentBuffers()
+        #region GPU Ressources bindings
+        private void MaterialBindings()
+        {
+            surfaceRenderer.material.SetTexture(TextureArrayMaterialID,_fourierComponentTextureArray);
+        }
+
+        private void ConstantBufferBinding()
+        {
+            _constantParamBuffer = new ComputeBuffer(2, sizeof(int), ComputeBufferType.Constant);
+            oceanInitShader.SetConstantBuffer("RarelyUpdated", _constantParamBuffer, 0, sizeof(int) * 4);
+            oceanUpdateShader.SetConstantBuffer("RarelyUpdated", _constantParamBuffer, 0, sizeof(int) * 4);
+            byte[] bufferData = new byte[8];
+            BitConverter.GetBytes(_numberOfSamples).CopyTo(bufferData, 0);
+            BitConverter.GetBytes(patchSize).CopyTo(bufferData, 4);
+            _constantParamBuffer.SetData(bufferData);
+        }
+
+        private void RuntimeComputeBindings()
         {
             //some of these values could be packed in constant buffers (although they sadly updated out of sync)
             oceanUpdateShader.SetFloat("t",0f);
@@ -139,20 +116,21 @@ namespace Ocean
             _singlePassFFTKernel = oceanUpdateShader.FindKernel("FFTCompute");
             
             _permutationKernelIndex = oceanUpdateShader.FindKernel("InversionAndPermutation");
-          
             
-            _displacementTexture =
-                new RenderTexture(_numberOfSamples, _numberOfSamples, 0,RenderTextureFormat.ARGBFloat) {enableRandomWrite = true, filterMode = FilterMode.Point};//Default format, wasting the alpha channel but R32G32B32 isn't supported everywhere
-            oceanUpdateShader.SetTexture(_permutationKernelIndex,"displacement",_displacementTexture);
             oceanUpdateShader.SetTexture(_permutationKernelIndex,"InOutFFTTextureArray",_fourierComponentTextureArray);
-            _normalComputeKernelIndex = oceanUpdateShader.FindKernel("ComputeNormal");
-            _normalTexture = new RenderTexture(_numberOfSamples, _numberOfSamples, 0, RenderTextureFormat.ARGBFloat)//probably don't need full float32
-                { enableRandomWrite = true, filterMode = FilterMode.Point };
-            oceanUpdateShader.SetTexture(_normalComputeKernelIndex,"normalMap",_normalTexture);
-            oceanUpdateShader.SetTexture(_normalComputeKernelIndex,"displacement",_displacementTexture);
-           
         }
-       
+        private void RuntimeShaderKeywordSetup()
+        {
+            var keywordSpace = oceanUpdateShader.keywordSpace;
+            foreach (var keyword in keywordSpace.keywords)
+            {
+                oceanUpdateShader.DisableKeyword(keyword);
+            }
+
+            var keywordToEnable = keywordSpace.FindKeyword(string.Concat("SAMPLE_", _numberOfSamples.ToString()));
+            oceanUpdateShader.EnableKeyword(keywordToEnable);
+        }
+        #endregion
         private void InitialSpectrumGeneration()
         {
 
@@ -194,15 +172,11 @@ namespace Ocean
         #endif
         private void Update()
         {
-            FourierComponents();
+            FourierComponentsUpdate();
             
-            oceanUpdateShader.SetInt("direction",0);
-            oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,_numberOfSamples,4);
-            oceanUpdateShader.SetInt("direction",1);
-            oceanUpdateShader.Dispatch(_singlePassFFTKernel,1,_numberOfSamples,4);
-            
-
-            #if UNITY_EDITOR || DEVELOPMENT_BUILD
+            ComputeFFT();
+            //TODO possibly generate mip maps for the fft results here, hopefully unnecessary
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             if(amplitudeDebug)oceanUpdateShader.Dispatch(_amplitudeDebugKernel,_numberOfSamples/16,_numberOfSamples/16,1);
             if (!_keywordInit)
             {
@@ -215,14 +189,9 @@ namespace Ocean
             
 
           
-            //inversion and permutation pass
-            oceanUpdateShader.Dispatch(_permutationKernelIndex, _numberOfSamples / 16, _numberOfSamples / 16, 1);
-            oceanUpdateShader.Dispatch(_normalComputeKernelIndex, _numberOfSamples/16,_numberOfSamples/16,1);
+            
         }
-        
-        
-
-        private void FourierComponents()
+        private void FourierComponentsUpdate()
         {
             
             _t += Time.deltaTime;//might need to be looped back to 0
@@ -230,6 +199,19 @@ namespace Ocean
             oceanUpdateShader.Dispatch(_timeSpectrumKernel,_numberOfSamples/16,_numberOfSamples/16,1);
             
         }
+        private void ComputeFFT()
+        {
+            //IFFT
+            oceanUpdateShader.SetInt("direction", 0);
+            oceanUpdateShader.Dispatch(_singlePassFFTKernel, 1, _numberOfSamples, 4);
+            oceanUpdateShader.SetInt("direction", 1);
+            oceanUpdateShader.Dispatch(_singlePassFFTKernel, 1, _numberOfSamples, 4);
+            //inversion permutation pass
+            oceanUpdateShader.Dispatch(_permutationKernelIndex, _numberOfSamples / 16, _numberOfSamples / 16, 4);
+        }
+
+
+        
         #endregion
 
         #region CleanUp
@@ -275,6 +257,14 @@ namespace Ocean
             oceanUpdateShader.SetTexture(_amplitudeDebugKernel,"DebugAmplitudeTexture",_textureDebugAmplitudeTexture);
             oceanUpdateShader.SetTexture(_amplitudeDebugKernel,"timeSpectrumResults",_fourierComponentTextureArray);
 
+        }
+        private void DebugKeywordsSettings()
+        {
+            var initKeywordSpace = oceanInitShader.keywordSpace;
+            foreach (var keyword in initKeywordSpace.keywords)
+            {
+                oceanInitShader.DisableKeyword(keyword);
+            }
         }
         #endif
         #endregion
