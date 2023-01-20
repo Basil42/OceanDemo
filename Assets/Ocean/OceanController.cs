@@ -75,6 +75,7 @@ namespace Ocean
             MaterialBindings();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             DebugBindings();
+            Debug.Log("surface bounds :" + surfaceRenderer.bounds.size.x);
 #endif
         }
         #region GPU Ressources bindings

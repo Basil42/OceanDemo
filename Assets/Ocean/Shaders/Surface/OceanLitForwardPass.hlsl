@@ -114,7 +114,7 @@ Varyings vert (Attributes input)
     VertexPositionInputs position_inputs = GetVertexPositionInputs(input.positionOS.xyz + Displacement);
     output.positionWS = position_inputs.positionWS;
     output.positionCS = position_inputs.positionCS;
-
+    output.uv += (Displacement.xy / UVOffsetFactor);//bind the actual patch size to a uniform
     //normal calculation likely faulty
     const float Y_dx = Data2.x* _HeightScaleFactor;
     const float X_dx = Data1.z* _HorizontalScaleDampening;
@@ -181,7 +181,17 @@ half4 frag (Varyings IN) : SV_Target
     InputData inputData = (InputData)0;
     inputData.positionWS = IN.positionWS;
     inputData.viewDirectionWS = SafeNormalize(GetWorldSpaceViewDir(IN.positionWS));
-    inputData.normalWS = NormalizeNormalPerPixel(IN.normalOS);
+    //attempting to calculate the normals here
+    float4 Data1 = _DataTextureArray.SampleLevel(bilinear_clamp_sampler,float3(IN.uv,1),0);
+    float4 Data2 = _DataTextureArray.SampleLevel(bilinear_clamp_sampler,float3(IN.uv,2),0);
+    float4 Data3 = _DataTextureArray.SampleLevel(bilinear_clamp_sampler,float3(IN.uv,3),0);
+
+    const float Y_dx = Data2.x* _HeightScaleFactor;
+    const float X_dx = Data1.z* _HorizontalScaleDampening;
+    const float Y_dz = Data3.x* _HeightScaleFactor;
+    const float Z_dz = Data3.z* _HorizontalScaleDampening;
+    const float3 normalOS = normalize(float3((Y_dx/(1+X_dx))*10.0f,1,10.0f*(Y_dz/(1+Z_dz))));
+    inputData.normalWS = NormalizeNormalPerPixel(normalOS);
     #if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR)
     inputData.shadowCoord = IN.shadowCoord;//for some reason unity trips up on this
     #elif defined(MAIN_LIGHT_CALCULATE_SHADOWS)
@@ -203,6 +213,6 @@ half4 frag (Varyings IN) : SV_Target
 
     half4 color = UniversalFragmentPBR(inputData,surface_data);
     color.rgb = MixFog(color.rgb, inputData.fogCoord);
-    return NormalVis ? float4(IN.normalWS.r,0,0,1) : color;
+    return NormalVis ? float4(normalOS.r,0,normalOS.b,1) : color;
 }
 #endif

@@ -50,12 +50,13 @@ Material:
     - NormalFiltering: 1
     - NormalVis: 0
     - TangentVis: 0
-    - _HeightScaleFactor: 7.48
-    - _HorizontalScaleDampening: 0.016
+    - UVOffsetFactor: 100
+    - _HeightScaleFactor: 1
+    - _HorizontalScaleDampening: 1
     - _MaxTessDistance: 64
     - _Opacity: 1
     - _Smoothness: 0.537
-    - _Tess: 48.8
+    - _Tess: 7.9
     - _Weight: 0
     - normalFiltering: 1
     m_Colors:

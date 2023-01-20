@@ -13,6 +13,7 @@ Shader "Custom/OceanShader"
         [ToggleUI]NormalVis("visualize Normals?",Float) = 0
         [ToggleUI]TangentVis("visualize tangents?",Float) = 0
         [ToggleUI]normalFiltering("normal filtering",Float) = 0
+        UVOffsetFactor("UV offset factor", Range(1,1000)) = 100
     }
     SubShader
     {

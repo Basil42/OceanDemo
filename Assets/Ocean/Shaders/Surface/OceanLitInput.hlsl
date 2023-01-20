@@ -18,6 +18,7 @@ float _Smoothness;
 half4 _Color;
 half4 _SpecGloss;
 float4 _DataTextureArray_ST;
+float UVOffsetFactor;
 CBUFFER_END
 
 
